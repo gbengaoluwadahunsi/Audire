@@ -633,24 +633,6 @@ export default function Reader({ book, onBack, autoPlay = false }) {
     if (idx >= 0) setSearchMatchIdx(idx);
   }, [searchMatches, currentSentenceIdx]);
 
-  useEffect(() => {
-    if (searchScope !== 'book') return;
-    if (!searchQuery.trim()) {
-      setBookSearchResults([]);
-      return;
-    }
-    const id = setTimeout(() => { runBookSearch(searchQuery); }, 250);
-    return () => clearTimeout(id);
-  }, [searchScope, searchQuery, runBookSearch]);
-
-  const goToSearchMatch = useCallback((direction) => {
-    if (searchMatches.length === 0) return;
-    const next = direction === 'next' ? searchMatchIdx + 1 : searchMatchIdx - 1;
-    const i = next < 0 ? searchMatches.length - 1 : next >= searchMatches.length ? 0 : next;
-    setSearchMatchIdx(i);
-    setCurrentSentenceIdx(searchMatches[i]);
-  }, [searchMatches, searchMatchIdx]);
-
   const runBookSearch = useCallback(async (q) => {
     if (!bookInstance || !q?.trim()) {
       setBookSearchResults([]);
@@ -679,6 +661,24 @@ export default function Reader({ book, onBack, autoPlay = false }) {
       setBookSearching(false);
     }
   }, [bookInstance, totalPages]);
+
+  useEffect(() => {
+    if (searchScope !== 'book') return;
+    if (!searchQuery.trim()) {
+      setBookSearchResults([]);
+      return;
+    }
+    const id = setTimeout(() => { runBookSearch(searchQuery); }, 250);
+    return () => clearTimeout(id);
+  }, [searchScope, searchQuery, runBookSearch]);
+
+  const goToSearchMatch = useCallback((direction) => {
+    if (searchMatches.length === 0) return;
+    const next = direction === 'next' ? searchMatchIdx + 1 : searchMatchIdx - 1;
+    const i = next < 0 ? searchMatches.length - 1 : next >= searchMatches.length ? 0 : next;
+    setSearchMatchIdx(i);
+    setCurrentSentenceIdx(searchMatches[i]);
+  }, [searchMatches, searchMatchIdx]);
 
   // Scroll active sentence into view
   useEffect(() => {
