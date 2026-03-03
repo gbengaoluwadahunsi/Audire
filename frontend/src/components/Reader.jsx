@@ -146,6 +146,8 @@ export default function Reader({ book, onBack, autoPlay = false }) {
   const advancingToPageRef = useRef(null);
   const loadedPageForContentRef = useRef(0);
   const mountedRef = useRef(true);
+  const listenSessionStartedAtRef = useRef(null);
+  const listenSessionWordsRef = useRef(0);
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
   useEffect(() => {
     mountedRef.current = true;
@@ -400,8 +402,6 @@ export default function Reader({ book, onBack, autoPlay = false }) {
 
   const pdfRightRef = useRef(null);
   const renderingRef = useRef(new Set());
-  const listenSessionStartedAtRef = useRef(null);
-  const listenSessionWordsRef = useRef(0);
 
   // Render visible PDF pages in batches for the right-side viewer
   const renderPdfBatch = useCallback(async (startPage, count) => {
