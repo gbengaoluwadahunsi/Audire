@@ -5,6 +5,8 @@ Run: python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 Voice models are auto-downloaded on first use into the voices/ subfolder.
 You can also run:  python download_voices.py
 """
+import asyncio
+import gc
 import io
 import json
 import logging
@@ -44,6 +46,8 @@ _HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US"
 _loaded_voices: dict = {}
 _MAX_CACHED_VOICES = int(os.getenv("MAX_CACHED_VOICES", "1"))  # Limit memory on Render free tier (~60MB per voice)
 _voice_access_order: list = []  # LRU: oldest first
+# Only 1 TTS at a time to avoid memory spikes on 512MB Render free tier
+_tts_semaphore = asyncio.Semaphore(1)
 _logger = logging.getLogger("clearread.backend")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
@@ -132,28 +136,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ClearRead TTS", lifespan=lifespan)
 
-# CORS: allow Vercel frontend + localhost for dev. Set ALLOWED_ORIGINS to override (comma-separated).
-_default_origins = [
-    "https://audire-mu.vercel.app",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-]
-_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
-if _allowed_origins_env == "*":
-    _allowed_origins = ["*"]
-elif _allowed_origins_env:
-    _allowed_origins = [x.strip() for x in _allowed_origins_env.split(",") if x.strip()] or _default_origins
-else:
-    _allowed_origins = _default_origins
+# CORS: default "*" allows all origins. Set ALLOWED_ORIGINS to restrict (comma-separated).
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*").strip()
+_allowed_origins = ["*"] if _allowed_origins_env == "*" else [x.strip() for x in _allowed_origins_env.split(",") if x.strip()] or ["*"]
 
+# CORS must be added first so it runs last (outermost) and handles OPTIONS preflight
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # Vercel preview deployments
     allow_credentials=False if _allowed_origins == ["*"] else True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600,
@@ -235,13 +227,22 @@ def split_text_for_tts(text: str, max_chunk_chars: int = 600) -> list[str]:
     return chunks
 
 
+def _run_synthesize(text: str, voice_id: str, speed: float) -> bytes:
+    """Blocking synthesis; run in executor. Caller holds semaphore."""
+    result = synthesize_with_retry(text, voice_id, speed)
+    gc.collect()
+    return result
+
+
 @app.post("/api/tts")
 async def synthesize_endpoint(request: TTSRequest):
     """Synthesize speech from text. Returns WAV audio bytes."""
     text = validate_text_payload(request.text)
     voice_id = request.voice if request.voice in VOICE_REGISTRY else "lessac"
     try:
-        wav_bytes = synthesize_with_retry(text, voice_id, request.speed)
+        async with _tts_semaphore:
+            loop = asyncio.get_event_loop()
+            wav_bytes = await loop.run_in_executor(None, _run_synthesize, text, voice_id, request.speed)
         return Response(content=wav_bytes, media_type="audio/wav")
     except HTTPException:
         raise
@@ -264,19 +265,21 @@ async def synthesize_stream(request: TTSStreamRequest):
         chunks = split_text_for_tts(request.text, max_chunk_chars=max_chunk_chars)
 
     async def event_stream():
-        try:
-            for i, chunk_text in enumerate(chunks):
-                wav_bytes = synthesize_with_retry(chunk_text, voice_id, speed)
-                payload = {
-                    "type": "chunk",
-                    "index": i,
-                    "audio_b64": base64.b64encode(wav_bytes).decode("ascii"),
-                }
-                yield (json.dumps(payload) + "\n").encode("utf-8")
-            yield b'{"type":"done"}\n'
-        except Exception as e:  # noqa: BLE001
-            _logger.exception("tts_stream_failed voice=%s err=%s", voice_id, str(e))
-            yield (json.dumps({"type": "error", "detail": str(e)}) + "\n").encode("utf-8")
+        async with _tts_semaphore:
+            try:
+                loop = asyncio.get_event_loop()
+                for i, chunk_text in enumerate(chunks):
+                    wav_bytes = await loop.run_in_executor(None, _run_synthesize, chunk_text, voice_id, speed)
+                    payload = {
+                        "type": "chunk",
+                        "index": i,
+                        "audio_b64": base64.b64encode(wav_bytes).decode("ascii"),
+                    }
+                    yield (json.dumps(payload) + "\n").encode("utf-8")
+                yield b'{"type":"done"}\n'
+            except Exception as e:  # noqa: BLE001
+                _logger.exception("tts_stream_failed voice=%s err=%s", voice_id, str(e))
+                yield (json.dumps({"type": "error", "detail": str(e)}) + "\n").encode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
