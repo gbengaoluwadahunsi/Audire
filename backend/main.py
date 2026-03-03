@@ -42,6 +42,8 @@ VOICE_REGISTRY = {
 _HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US"
 
 _loaded_voices: dict = {}
+_MAX_CACHED_VOICES = int(os.getenv("MAX_CACHED_VOICES", "1"))  # Limit memory on Render free tier (~60MB per voice)
+_voice_access_order: list = []  # LRU: oldest first
 _logger = logging.getLogger("clearread.backend")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
@@ -76,15 +78,24 @@ def ensure_voice_files(voice_id: str):
 
 
 def get_voice(voice_id: str):
-    """Load (or return cached) PiperVoice instance."""
-    if voice_id in _loaded_voices:
-        return _loaded_voices[voice_id]
+    """Load (or return cached) PiperVoice instance. LRU evicts when over MAX_CACHED_VOICES."""
+    global _voice_access_order
     if voice_id not in VOICE_REGISTRY:
         voice_id = "lessac"
+    if voice_id in _loaded_voices:
+        _voice_access_order = [v for v in _voice_access_order if v != voice_id] + [voice_id]
+        return _loaded_voices[voice_id]
+    # Evict LRU if at capacity (each model ~60MB; Render free tier = 512MB)
+    while len(_loaded_voices) >= _MAX_CACHED_VOICES and _voice_access_order:
+        evict_id = _voice_access_order.pop(0)
+        if evict_id in _loaded_voices:
+            del _loaded_voices[evict_id]
+            _logger.info("voice_evicted voice=%s cached=%s", evict_id, list(_loaded_voices.keys()))
     model_path, config_path = ensure_voice_files(voice_id)
     from piper import PiperVoice
     voice = PiperVoice.load(str(model_path), config_path=str(config_path), use_cuda=False)
     _loaded_voices[voice_id] = voice
+    _voice_access_order.append(voice_id)
     return voice
 
 
@@ -116,17 +127,36 @@ def synthesize_with_retry(text: str, voice_id: str, speed: float, attempts: int 
 async def lifespan(app: FastAPI):
     yield
     _loaded_voices.clear()
+    _voice_access_order.clear()
 
 
 app = FastAPI(title="ClearRead TTS", lifespan=lifespan)
-_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*").strip()
-_allowed_origins = ["*"] if _allowed_origins_env == "*" else [x.strip() for x in _allowed_origins_env.split(",") if x.strip()]
+
+# CORS: allow Vercel frontend + localhost for dev. Set ALLOWED_ORIGINS to override (comma-separated).
+_default_origins = [
+    "https://audire-mu.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+if _allowed_origins_env == "*":
+    _allowed_origins = ["*"]
+elif _allowed_origins_env:
+    _allowed_origins = [x.strip() for x in _allowed_origins_env.split(",") if x.strip()] or _default_origins
+else:
+    _allowed_origins = _default_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Vercel preview deployments
     allow_credentials=False if _allowed_origins == ["*"] else True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
 
@@ -249,6 +279,12 @@ async def synthesize_stream(request: TTSStreamRequest):
             yield (json.dumps({"type": "error", "detail": str(e)}) + "\n").encode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
+@app.get("/")
+async def root():
+    """Root route for Render health checks and visitors. API docs at /docs."""
+    return {"service": "ClearRead TTS", "docs": "/docs", "health": "/api/health"}
 
 
 @app.get("/api/health")
