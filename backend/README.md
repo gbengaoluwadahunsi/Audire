@@ -68,6 +68,17 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 3. Open app — header shows **"Natural voice"** (green) when backend is reachable.
 4. Open a book → choose a voice → press Play.
 
+## Render deployment
+
+To avoid memory spikes from runtime voice downloads (Render has ephemeral disk), pre-download the default voice at build time:
+
+**Build command:**
+```
+pip install -r requirements.txt && python download_lessac.py
+```
+
+Or use the `render.yaml` blueprint in the repo root. If you have an existing Render service, update the build command in Dashboard → Service → Settings → Build & Deploy.
+
 ## Production notes
 
 - Set `ALLOWED_ORIGINS` to your frontend origin(s), comma-separated.

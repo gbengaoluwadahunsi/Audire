@@ -140,7 +140,35 @@ app = FastAPI(title="ClearRead TTS", lifespan=lifespan)
 _allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*").strip()
 _allowed_origins = ["*"] if _allowed_origins_env == "*" else [x.strip() for x in _allowed_origins_env.split(",") if x.strip()] or ["*"]
 
-# CORS must be added first so it runs last (outermost) and handles OPTIONS preflight
+
+@app.middleware("http")
+async def cors_headers_middleware(request: Request, call_next):
+    """Ensure CORS headers on every response (including errors). Preflight OPTIONS handled here."""
+    if request.method == "OPTIONS":
+        from starlette.responses import Response
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age": "600",
+            },
+        )
+    try:
+        response = await call_next(request)
+    except Exception as e:  # noqa: BLE001
+        _logger.exception("cors_middleware_caught err=%s", str(e))
+        from starlette.responses import JSONResponse
+        response = JSONResponse(status_code=500, content={"detail": str(e)})
+    # Add CORS headers to every response
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+
+# Standard CORS middleware (handles preflight; our cors_headers_middleware is fallback)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -285,6 +313,7 @@ async def synthesize_stream(request: TTSStreamRequest):
 
 
 @app.get("/")
+@app.head("/")
 async def root():
     """Root route for Render health checks and visitors. API docs at /docs."""
     return {"service": "ClearRead TTS", "docs": "/docs", "health": "/api/health"}

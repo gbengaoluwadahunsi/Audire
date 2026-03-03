@@ -26,13 +26,11 @@ import {
   recordListening,
   getBookVoiceProfile,
   setBookVoiceProfile,
-  getVoiceFavorites,
-  toggleVoiceFavorite,
   getCachedPageText,
   setCachedPageText,
 } from '../lib/state';
 import { FORMATS } from '../lib/summaryFormats';
-import { setCallbacks, getEngine, getBrowserVoices, getBrowserVoicesSorted, getPreferredNaturalVoice, checkBackend, preloadModel, isPiperReady, prebufferStreamChunks, FIXED_PIPER_VOICE_ID, getPiperVoices, hasOfflineAudioForPage } from '../lib/tts';
+import { setCallbacks, getEngine, getBrowserVoices, getBrowserVoicesSorted, getPreferredNaturalVoice, checkBackend, preloadModel, isPiperReady, prebufferStreamChunks, FIXED_PIPER_VOICE_ID, hasOfflineAudioForPage } from '../lib/tts';
 
 function TTS() { return getEngine(); }
 
@@ -90,7 +88,6 @@ export default function Reader({ book, onBack, autoPlay = false }) {
   const [speed, setSpeed] = useState(1.0);
   const [voice, setVoice] = useState('');
   const [voices, setVoices] = useState(() => getBrowserVoicesSorted());
-  const [voiceFavorites, setVoiceFavorites] = useState([]);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [bookmarks, setBookmarks] = useState([]);
   const [highlights, setHighlights] = useState([]);
@@ -222,19 +219,14 @@ export default function Reader({ book, onBack, autoPlay = false }) {
     if (saved.theme) setTheme(saved.theme);
     if (saved.dyslexiaMode) setDyslexiaMode(Boolean(saved.dyslexiaMode));
     if (saved.largeControls) setLargeControls(Boolean(saved.largeControls));
-    setVoiceFavorites(getVoiceFavorites());
   }, []);
 
-  // When Piper is ready, switch to Piper voices (including on mount if already loaded)
+  // When Piper is ready, use lessac (only voice we pre-download for production)
   useEffect(() => {
     if (isPiperReady()) {
-      const list = getPiperVoices();
-      const profile = getBookVoiceProfile(name, size);
-      const savedVoice = profile?.voice;
-      const valid = list.some((v) => v.id === savedVoice) ? savedVoice : FIXED_PIPER_VOICE_ID;
-      setVoices(list);
-      setVoice(valid);
-      TTS().setVoice(valid);
+      setVoices([{ id: FIXED_PIPER_VOICE_ID, name: 'Lessac' }]);
+      setVoice(FIXED_PIPER_VOICE_ID);
+      TTS().setVoice(FIXED_PIPER_VOICE_ID);
     } else if (modelStatus?.status === 'failed') {
       const list = getBrowserVoicesSorted();
       const settings = loadSettings();
@@ -491,14 +483,11 @@ export default function Reader({ book, onBack, autoPlay = false }) {
         TTS().setRate(bookSpeed);
         TTS().setVolume(settings.volume ?? 1);
         if (isPiperReady()) {
-          const list = getPiperVoices();
           const profile = getBookVoiceProfile(name, size);
-          const preferred = profile?.voice;
-          const validVoice = list.some((v) => v.id === preferred) ? preferred : FIXED_PIPER_VOICE_ID;
           const profileRate = typeof profile?.rate === 'number' ? profile.rate : null;
-          setVoices(list);
-          setVoice(validVoice);
-          TTS().setVoice(validVoice);
+          setVoices([{ id: FIXED_PIPER_VOICE_ID, name: 'Lessac' }]);
+          setVoice(FIXED_PIPER_VOICE_ID);
+          TTS().setVoice(FIXED_PIPER_VOICE_ID);
           if (profileRate && profileRate >= 0.5 && profileRate <= 2) {
             setSpeed(profileRate);
             TTS().setRate(profileRate);
@@ -1013,7 +1002,7 @@ export default function Reader({ book, onBack, autoPlay = false }) {
     const bookSpeeds = settings.bookSpeeds || {};
     bookSpeeds[name] = v;
     saveSettings({ ...settings, rate: v, bookSpeeds });
-    setBookVoiceProfile(name, size, { voice: isPiperReady() ? voice : '', rate: v });
+    setBookVoiceProfile(name, size, { rate: v });
   };
 
   const handlePreviewVoice = useCallback(() => {
@@ -1892,88 +1881,6 @@ export default function Reader({ book, onBack, autoPlay = false }) {
                     ))}
                   </select>
                 </label>
-                <label className={`flex items-center gap-1.5 ${theme === 'dark' ? 'text-slate-400' : theme === 'light' ? 'text-slate-500' : 'text-amber-700'}`}>
-                  <span className="material-symbols-outlined text-base">record_voice_over</span>
-                  {isPiperReady() ? (
-                    <>
-                      <select
-                        value={voice}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setVoice(v);
-                          TTS().setVoice(v);
-                          setBookVoiceProfile(name, size, { voice: v, rate: speed });
-                        }}
-                        className={`border rounded-lg px-2 py-1 text-xs max-w-[140px] ${theme === 'dark' ? 'bg-card-dark border-border-dark text-white' : theme === 'light' ? 'bg-white border-slate-200 text-slate-900' : 'bg-amber-100 border-amber-300 text-amber-900'}`}
-                        aria-label="Select voice"
-                      >
-                        {voices
-                          .slice()
-                          .sort((a, b) => {
-                            const aFav = voiceFavorites.includes(a.id) ? 1 : 0;
-                            const bFav = voiceFavorites.includes(b.id) ? 1 : 0;
-                            if (bFav !== aFav) return bFav - aFav;
-                            return (a.name || '').localeCompare(b.name || '');
-                          })
-                          .map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {voiceFavorites.includes(v.id) ? '★ ' : ''}{v.name}
-                            </option>
-                          ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => setVoiceFavorites(toggleVoiceFavorite(voice))}
-                        className={`text-[10px] font-medium px-2 py-1 rounded-md ${voiceFavorites.includes(voice) ? 'bg-amber-500/70 text-white' : theme === 'dark' ? 'bg-surface text-slate-300 hover:text-white' : 'bg-slate-200 text-slate-700 hover:text-slate-900'}`}
-                        title="Toggle favorite voice"
-                      >
-                        {voiceFavorites.includes(voice) ? 'Favorited' : 'Favorite'}
-                      </button>
-                      <span className="text-[10px] font-medium text-emerald-500 whitespace-nowrap" title="Piper natural voice">Natural</span>
-                    </>
-                  ) : (
-                    <span className={`border rounded-lg px-2 py-1 text-xs ${theme === 'dark' ? 'bg-card-dark border-border-dark text-white' : theme === 'light' ? 'bg-white border-slate-200 text-slate-900' : 'bg-amber-100 border-amber-300 text-amber-900'}`}>
-                      Browser voice
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handlePreviewVoice}
-                    disabled={ttsSentences.length === 0}
-                    className={`text-[10px] font-medium px-2 py-1 rounded-md disabled:opacity-40 ${theme === 'dark' ? 'bg-surface text-slate-300 hover:text-white' : 'bg-slate-200 text-slate-700 hover:text-slate-900'}`}
-                  >
-                    Preview
-                  </button>
-                </label>
-                {isPiperReady() && (
-                  <>
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-1 rounded-md border ${
-                        offlineAudioReady
-                          ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
-                          : theme === 'dark'
-                            ? 'text-slate-400 border-border-dark bg-surface'
-                            : 'text-slate-600 border-slate-300 bg-slate-100'
-                      }`}
-                      title={offlineAudioReady ? 'Offline audio is cached for this page' : 'Offline audio not cached yet'}
-                    >
-                      {offlineAudioReady ? 'Offline audio ready' : 'Offline audio not ready'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handlePrepareOffline}
-                      disabled={offlinePreparing}
-                      className={`text-[10px] font-semibold px-2 py-1 rounded-md border disabled:opacity-60 ${
-                        theme === 'dark'
-                          ? 'text-slate-300 border-border-dark bg-surface hover:text-white'
-                          : 'text-slate-700 border-slate-300 bg-slate-100 hover:text-slate-900'
-                      }`}
-                      title="Cache audio for this page + next 3 pages"
-                    >
-                      {offlinePreparing ? 'Preparing...' : 'Prepare offline +3'}
-                    </button>
-                  </>
-                )}
                 <span className={`text-xs font-medium ${theme === 'dark' ? 'text-slate-500' : theme === 'light' ? 'text-slate-400' : 'text-amber-600'}`}>
                   Page {displayPageLabel(currentPage)}{pageLabels ? ` (${currentPage}/${totalPages})` : ` of ${totalPages || 1}`}
                 </span>

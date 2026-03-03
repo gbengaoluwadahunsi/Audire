@@ -1,0 +1,11 @@
+# Render Blueprint — backend only. Frontend deploys to Vercel.
+services:
+  - type: web
+    name: audire
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python download_lessac.py
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
