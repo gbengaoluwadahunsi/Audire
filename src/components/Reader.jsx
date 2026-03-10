@@ -132,12 +132,18 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
   }, [currentPage]);
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:triggerEffect',message:'trigger effect run',data:{triggerRef:triggerPlayAfterNavRef.current,format:bookData?.format,totalPages,currentPage},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (triggerPlayAfterNavRef.current && bookData?.format === 'pdf' && pdfRef.current && totalPages > 0) {
       triggerPlayAfterNavRef.current = false;
       console.log('Reader: Triggering play after nav, currentPage=', currentPageRef.current);
       const id = setTimeout(() => {
         const fn = handlePlayPauseRef.current;
         if (fn) {
+          // #region agent log
+          fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:triggerTimeout',message:'calling handlePlayPause after nav',data:{currentPageRef:currentPageRef.current},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
           console.log('Reader: Calling handlePlayPause after nav');
           fn();
         }
@@ -483,6 +489,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
   const handlePlayPauseRef = useRef(null);
 
   const handlePlayPause = async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:handlePlayPause:entry',message:'handlePlayPause entry',data:{isPlayingTTS,isPaused:ttsManager.isPaused,hasActivePlayback:ttsManager.hasActivePlayback,playbackSessionRef:playbackSessionRef.current,currentPageRef:currentPageRef.current,currentPage},timestamp:Date.now(),hypothesisId:'B,C,D'})}).catch(()=>{});
+    // #endregion
     // Unlock audio for delayed playback (browser autoplay policy)
     try {
       const silent = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
@@ -501,6 +510,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
 
     // 2. If it was paused and we have playback to resume, then RESUME
     if (ttsManager.isPaused && ttsManager.hasActivePlayback) {
+      // #region agent log
+      fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:handlePlayPause',message:'taking RESUME path',data:{},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       console.log('Reader: Resuming TTS');
       setIsPlayingTTS(true);
       ttsManager.resume();
@@ -517,6 +529,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
     const sessionId = Date.now();
     playbackSessionRef.current = sessionId;
 
+    // #region agent log
+    fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:handlePlayPause',message:'taking FRESH START path',data:{sessionId,currentPageRef:currentPageRef.current,currentPage},timestamp:Date.now(),hypothesisId:'B,C'})}).catch(()=>{});
+    // #endregion
     ttsManager.startSession();
     ttsManager._stopped = false;
     await new Promise((r) => setTimeout(r, 150));
@@ -565,11 +580,15 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         let text = '';
         let chunks = [];
         let lastEpubHref = null;
+        // Use currentPageRef for PDF - it's updated synchronously in goToPdfPage, avoiding closure staleness after nav
         let playbackPdfPage = bookData.format === 'pdf'
-          ? Math.max(currentPageRef.current || 1, currentPage)
+          ? (currentPageRef.current || 1)
           : currentPage;
 
         if (bookData.format === 'pdf') {
+          // #region agent log
+          fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:handlePlayPause:pdfLoop',message:'PDF playback page',data:{playbackPdfPage,currentPageRef:currentPageRef.current,currentPage,contentTotalPages},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           console.log('Reader: Playback page initialized to', playbackPdfPage, 'currentPageRef=', currentPageRef.current, 'currentPage=', currentPage);
         }
 
@@ -773,8 +792,8 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         addToast?.('Could not go to previous page.', 'info');
       }
     } else if (!isNavigatingRef.current) {
-      await goToPdfPage(currentPage - 1);
       if (wasPlaying) triggerPlayAfterNavRef.current = true;
+      await goToPdfPage(currentPage - 1);
     }
   };
 
@@ -819,11 +838,14 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         addToast?.('Could not go to next page.', 'info');
       }
     } else if (!isNavigatingRef.current) {
-      await goToPdfPage(currentPage + 1);
+      // Set trigger BEFORE goToPdfPage so the effect runs when currentPage changes (effect deps include currentPage)
       if (shouldResumeTTS) {
-        console.log('Reader: Next page done, setting triggerPlayAfterNav (wasPlaying=', shouldResumeTTS, ')');
+        // #region agent log
+        fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4daa43'},body:JSON.stringify({sessionId:'4daa43',location:'Reader.jsx:nextPage',message:'set trigger BEFORE goToPdfPage',data:{shouldResumeTTS},timestamp:Date.now(),hypothesisId:'A',runId:'post-fix'})}).catch(()=>{});
+        // #endregion
         triggerPlayAfterNavRef.current = true;
       }
+      await goToPdfPage(currentPage + 1);
     }
   };
 
