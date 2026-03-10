@@ -1,0 +1,26 @@
+{
+  "name": "Audire - Podcast-Quality eBook Reader",
+  "short_name": "Audire",
+  "description": "Read with your ears. Listen like a podcast. EPUB & PDF reader with AI-powered TTS.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0f",
+  "theme_color": "#8b5cf6",
+  "categories": ["books", "education", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
