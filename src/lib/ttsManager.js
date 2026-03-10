@@ -120,6 +120,17 @@ class TTSManager {
     return Promise.resolve();
   }
 
+  _speakWebSpeechChunk(text) {
+    const clean = (text || '').replace(/\s+/g, ' ').trim();
+    if (!clean || !window.speechSynthesis) return Promise.resolve();
+    return new Promise((resolve) => {
+      const u = this._createUtterance(clean);
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      window.speechSynthesis.speak(u);
+    });
+  }
+
   _createUtterance(text) {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = this.speed;
@@ -169,13 +180,19 @@ class TTSManager {
   }
 
   async _speakKokoroChunk(text) {
-    const blob = await fetchTtsAudio(text, this.kokoroVoice, this.speed);
+    let blob;
+    try {
+      blob = await fetchTtsAudio(text, this.kokoroVoice, this.speed);
+    } catch (err) {
+      console.warn('[TTS] Kokoro fetch failed, falling back to Web Speech:', err?.message);
+      return this._speakWebSpeechChunk(text);
+    }
     if (!blob || blob.size < 100) {
       // #region agent log
       _dbg('blob invalid', { blobSize: blob?.size });
       // #endregion
-      console.error('[TTS] Blob invalid:', blob?.size);
-      throw new Error('TTS produced no audio');
+      console.warn('[TTS] Blob invalid or empty, falling back to Web Speech');
+      return this._speakWebSpeechChunk(text);
     }
     return new Promise((resolve, reject) => {
       if (this._stopped) return resolve();
