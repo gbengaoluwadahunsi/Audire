@@ -761,9 +761,18 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
     }
   };
 
+  // Always clear TTS on navigation - even when paused, so we never "resume" old page content
+  const clearTTSOnNavigation = () => {
+    playbackSessionRef.current = 0;
+    ttsManager.stop();
+    ttsManager.isPaused = false;
+    setIsPlayingTTS(false);
+    pause();
+  };
+
   const prevPage = async () => {
     const wasPlaying = isPlayingTTS;
-    stopTTSIfPlaying();
+    clearTTSOnNavigation();
     if (bookData.format === 'epub') {
       const rendition = renditionRef.current;
       const book = bookRef.current;
@@ -799,7 +808,7 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
 
   const nextPage = async () => {
     const shouldResumeTTS = isPlayingTTS;
-    stopTTSIfPlaying();
+    clearTTSOnNavigation();
     if (bookData.format === 'epub') {
       const rendition = renditionRef.current;
       const book = bookRef.current;
