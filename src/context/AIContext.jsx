@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import * as api from '../lib/api.js';
 
 const AIContext = createContext(null);
 
@@ -15,7 +16,6 @@ export function AIProvider({ children }) {
       setError(null);
       try {
         if (!API_URL) throw new Error(AI_UNAVAILABLE_MSG);
-        const api = await import('../lib/api.js');
         return await api[apiFn](...args);
       } catch (err) {
         setError(err.message);

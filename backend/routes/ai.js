@@ -101,7 +101,8 @@ Example: [{"front":"Why might teams choose micro-frontends over a monolith?","ba
     const user = `Generate flashcards from this text:\n\n"${String(text).slice(0, 3000)}"`;
     const raw = await groqChat([{ role: 'system', content: system }, { role: 'user', content: user }], { max_tokens: 768 });
     const match = raw.match(/\[[\s\S]*\]/);
-    let cards = match ? JSON.parse(match[0]) : [];
+    let cards = [];
+    try { cards = match ? JSON.parse(match[0]) : []; } catch { cards = []; }
     if (!Array.isArray(cards)) cards = [];
     cards = cards.filter((c) => c && (String(c.front || '').trim() && String(c.back || '').trim()));
     res.json({ cards });

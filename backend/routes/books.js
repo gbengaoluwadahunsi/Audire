@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
+import { convertEpubToPdf } from '../epubToPdf.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -131,6 +132,44 @@ router.post('/', upload.single('file'), async (req, res) => {
   }
 });
 
+/** Convert EPUB to PDF and serve. Caches result as {id}_converted.pdf */
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).send('Book not found');
+    const book = rows[0];
+    if (book.format !== 'epub') {
+      return res.status(400).json({ error: 'Only EPUB books can be converted to PDF' });
+    }
+
+    const epubPath = path.join(BOOKS_DIR, `${book.id}.epub`);
+    const pdfPath = path.join(BOOKS_DIR, `${book.id}_converted.pdf`);
+
+    try {
+      await fs.access(epubPath);
+    } catch {
+      return res.status(404).send('EPUB file not found');
+    }
+
+    try {
+      await fs.access(pdfPath);
+    } catch {
+      try {
+        await convertEpubToPdf(epubPath, pdfPath);
+      } catch (err) {
+        console.error('EPUB to PDF conversion error:', err);
+        return res.status(500).json({ error: err.message || 'Conversion failed' });
+      }
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.sendFile(path.resolve(pdfPath));
+  } catch (err) {
+    console.error('Get PDF error:', err);
+    res.status(500).send('Error');
+  }
+});
+
 router.get('/:id/file', async (req, res) => {
   try {
     const { rows } = await query('SELECT format FROM books WHERE id = $1', [req.params.id]);
@@ -153,23 +192,26 @@ router.get('/:id/file', async (req, res) => {
 
 router.get('/:id/cover', async (req, res) => {
   try {
+    const id = req.params.id;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return res.status(400).json({ error: 'Invalid book ID' });
+    }
     const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
     for (const ext of exts) {
-      const coverPath = path.join(COVERS_DIR, `${req.params.id}${ext}`);
+      const coverPath = path.join(COVERS_DIR, `${id}${ext}`);
       try {
         await fs.access(coverPath);
         return res.sendFile(path.resolve(coverPath));
       } catch {}
     }
     // Fallback: find any file starting with book id (handles odd extensions)
-    const prefix = req.params.id;
     const files = await fs.readdir(COVERS_DIR).catch(() => []);
-    const match = files.find((f) => f.startsWith(prefix) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
+    const match = files.find((f) => f.startsWith(id) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
     if (match) {
       return res.sendFile(path.resolve(path.join(COVERS_DIR, match)));
     }
     // Clear stale cover URL so frontend can retry repair
-    await query('UPDATE books SET cover = NULL WHERE id = $1 AND cover IS NOT NULL', [req.params.id]);
+    await query('UPDATE books SET cover = NULL WHERE id = $1 AND cover IS NOT NULL', [id]);
     res.status(404).send('Cover not found');
   } catch (err) {
     console.error('Get cover error:', err);
@@ -232,7 +274,10 @@ router.delete('/:id', async (req, res) => {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
       const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
       await fs.unlink(filePath).catch(() => {});
-      for (const e of ['.jpg', '.jpeg', '.png']) {
+      if (rows[0].format === 'epub') {
+        await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}_converted.pdf`)).catch(() => {});
+      }
+      for (const e of ['.jpg', '.jpeg', '.png', '.gif', '.webp']) {
         await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => {});
       }
     }

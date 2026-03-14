@@ -24,13 +24,15 @@ export function PlaybackProvider({ children }) {
     saveSettings({ ...settings, speed: clampedSpeed });
   }, []);
 
+  const [onNext, setOnNext] = useState(null);
+  const [onPrev, setOnPrev] = useState(null);
+
   const play = useCallback((book) => {
     setCurrentBook(book);
     setIsPlaying(true);
   }, []);
 
   const pause = useCallback(() => {
-    ttsManager.pause();
     setIsPlaying(false);
   }, []);
 
@@ -39,6 +41,8 @@ export function PlaybackProvider({ children }) {
     setIsPlaying(false);
     setCurrentBook(null);
     setProgress(0);
+    setOnNext(null);
+    setOnPrev(null);
   }, []);
 
   const toggle = useCallback((book) => {
@@ -56,9 +60,13 @@ export function PlaybackProvider({ children }) {
       progress,
       volume,
       speed,
+      onNext,
+      onPrev,
       setProgress,
       setVolume,
       setSpeed,
+      setOnNext,
+      setOnPrev,
       play,
       pause,
       stop,

@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary'
 import { PlaybackProvider } from './context/PlaybackContext'
 import { AIProvider } from './context/AIContext'
 
@@ -13,10 +14,12 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <PlaybackProvider>
-      <AIProvider>
-        <App />
-      </AIProvider>
-    </PlaybackProvider>
+    <ErrorBoundary>
+      <PlaybackProvider>
+        <AIProvider>
+          <App />
+        </AIProvider>
+      </PlaybackProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )
