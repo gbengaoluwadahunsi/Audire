@@ -1,46 +1,41 @@
 // TTS Manager: Web Speech API + Kokoro TTS (backend only)
 
-const API_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-
-// #region agent log
-function _dbg(msg, data) {
-  fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4110de'},body:JSON.stringify({sessionId:'4110de',location:'ttsManager.js',message:msg,data:data||{},timestamp:Date.now()})}).catch(()=>{});
+function getTtsBaseUrl() {
+  const env = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+  if (env) return env;
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
 }
-// #endregion
+
+/** Warm up Kokoro backend so first play starts faster (call when Kokoro is selected) */
+export async function warmupKokoro() {
+  const base = getTtsBaseUrl();
+  try {
+    const res = await fetch(`${base}/api/tts/warmup`, { method: 'GET' });
+    if (res.ok) return true;
+  } catch (_) { }
+  return false;
+}
 
 async function fetchTtsAudio(text, voice = 'af_heart', speed = 1.0) {
-  const base = API_BASE || '';
+  const base = getTtsBaseUrl();
   const url = `${base}/api/tts`;
-  console.log('[TTS] Fetching from', url, 'text len=', text?.length, 'voice=', voice);
-  // #region agent log
-  _dbg('fetch start', { url, textLen: text?.length });
-  // #endregion
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice, speed }),
     });
-    // #region agent log
-    _dbg('fetch response', { status: res.status, ok: res.ok, contentType: res.headers.get('Content-Type') });
-    // #endregion
-    console.log('[TTS] Response status=', res.status, res.statusText);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      console.error('[TTS] Backend error:', res.status, err);
-      throw new Error(err.error || res.statusText);
+      const msg = err.error || res.statusText;
+      throw new Error(msg || `TTS failed (${res.status})`);
     }
-    const blob = await res.blob();
-    // #region agent log
-    _dbg('fetch blob', { blobSize: blob?.size, blobType: blob?.type });
-    // #endregion
-    console.log('[TTS] Got blob size=', blob?.size, 'bytes');
-    return blob;
+    return res.blob();
   } catch (err) {
-    // #region agent log
-    _dbg('fetch error', { err: String(err?.message || err) });
-    // #endregion
-    console.error('[TTS] Fetch failed:', err);
+    if (err.message?.includes('fetch') || err.message?.includes('Failed to fetch')) {
+      throw new Error('Kokoro TTS unavailable. Start the backend with: npm run dev:backend');
+    }
     throw err;
   }
 }
@@ -79,16 +74,19 @@ function getDefaultNaturalVoice(voices) {
 class TTSManager {
   constructor() {
     this.speed = 1.0;
+    this.volume = 1.0;
     this.voiceId = null;
     this.engine = 'web-speech'; // 'web-speech' | 'kokoro'
     this.kokoroVoice = 'af_heart';
-    this.kokoroBackend = false; // Use backend (faster CPU) instead of browser WASM
+    this.onKokoroFallback = null;
     this.isLoaded = true;
     this.isLoading = false;
     this.currentUtterance = null;
     this._currentAudio = null;
     this._stopped = false;
     this.isPaused = false;
+    this._audioCache = new Map();
+    this._failureCount = 0;
   }
 
   pause() {
@@ -109,9 +107,9 @@ class TTSManager {
     }
   }
 
-  async _waitIfPaused() {
-    while (this.isPaused && !this._stopped) {
-      await new Promise((r) => setTimeout(r, 100));
+  async _waitIfPaused(sessionId) {
+    while (this.isPaused && !this._stopped && (sessionId === undefined || sessionId === this.currentSessionId)) {
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
 
@@ -135,7 +133,7 @@ class TTSManager {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = this.speed;
     u.pitch = 1;
-    u.volume = 1;
+    u.volume = this.volume ?? 1;
     const voices = window.speechSynthesis.getVoices();
     if (this.voiceId) {
       const v = voices.find((x) => x.voiceURI === this.voiceId || x.name === this.voiceId);
@@ -179,84 +177,209 @@ class TTSManager {
     });
   }
 
-  async _speakKokoroChunk(text) {
-    let blob;
-    try {
-      blob = await fetchTtsAudio(text, this.kokoroVoice, this.speed);
-    } catch (err) {
-      console.warn('[TTS] Kokoro fetch failed, falling back to Web Speech:', err?.message);
-      return this._speakWebSpeechChunk(text);
-    }
-    if (!blob || blob.size < 100) {
-      // #region agent log
-      _dbg('blob invalid', { blobSize: blob?.size });
-      // #endregion
-      console.warn('[TTS] Blob invalid or empty, falling back to Web Speech');
-      return this._speakWebSpeechChunk(text);
-    }
+  async _playAudioElement(audio, url, sessionId) {
+    if (!audio) return;
     return new Promise((resolve, reject) => {
-      if (this._stopped) return resolve();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      // Immediate abort if session changed
+      if (this._stopped || (sessionId !== undefined && sessionId !== this.currentSessionId)) {
+        if (url) URL.revokeObjectURL(url);
+        return resolve();
+      }
+
       this._currentAudio = audio;
-      audio.volume = 1;
-      audio.onended = () => {
-        // #region agent log
-        _dbg('audio ended', {});
-        // #endregion
-        console.log('[TTS] Playback ended');
-        URL.revokeObjectURL(url);
-        this._currentAudio = null;
+      audio.volume = this.volume ?? 1;
+      let resolved = false;
+
+      const stopCheck = setInterval(() => {
+        if (this._stopped || (sessionId !== undefined && sessionId !== this.currentSessionId)) {
+          audio.pause();
+          audio.src = '';
+          done();
+          return;
+        }
+
+        // Bridge: resolve just before end for seamless chunk transition
+        // Proportional window: 150ms for long clips, scales down for short ones
+        if (audio.duration > 0) {
+          const bridge = Math.min(0.15, audio.duration * 0.25);
+          if (audio.currentTime >= audio.duration - bridge) {
+            done();
+          }
+        }
+      }, 50);
+
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        clearInterval(stopCheck);
+        // Important: We don't null this._currentAudio immediately if we're bridging
+        // to pre-start the next one. But we allow the loop to continue.
+        if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
         resolve();
       };
-      audio.onerror = (e) => {
-        // #region agent log
-        _dbg('audio error', { err: String(e?.message || e), code: audio?.error?.code });
-        // #endregion
-        console.error('[TTS] Audio playback error:', e);
-        URL.revokeObjectURL(url);
-        this._currentAudio = null;
-        reject(new Error('Audio playback failed'));
+
+      audio.onended = done;
+      audio.onerror = () => {
+        // Ignore errors from intentional stops (src cleared or session changed)
+        if (!this._stopped) console.warn('[TTS] Audio element error');
+        done();
       };
-      audio.onpause = () => { if (!this.isPaused) audio.play(); };
-      // #region agent log
-      _dbg('play start', { blobSize: blob.size });
-      // #endregion
-      console.log('[TTS] Starting playback, blob size=', blob.size);
+
       if (this.isPaused) audio.pause();
       else {
         const playPromise = audio.play();
         if (playPromise && typeof playPromise.then === 'function') {
-          playPromise.then(() => {
-            // #region agent log
-            _dbg('play resolved', {});
-            // #endregion
-          }).catch((err) => {
-            // #region agent log
-            _dbg('play rejected', { err: String(err?.message || err) });
-            // #endregion
-            console.error('[TTS] audio.play() rejected:', err);
-            reject(err);
+          playPromise.catch((err) => {
+            clearInterval(stopCheck);
+            console.error('[TTS] audio.play() failed:', err);
+            done();
           });
         }
       }
     });
   }
 
-  async speakContinuous(textChunks, onChunkComplete) {
+  async _speakKokoroChunk(text) {
+    let blob;
+    try {
+      blob = await fetchTtsAudio(text, this.kokoroVoice, this.speed);
+    } catch (err) {
+      console.warn('[TTS] Kokoro fetch failed, falling back to Web Speech:', err?.message);
+      this.onKokoroFallback?.(err?.message);
+      return this._speakWebSpeechChunk(text);
+    }
+    if (!blob || blob.size < 100) {
+      return this._speakWebSpeechChunk(text);
+    }
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    return this._playAudioElement(audio, url, this.currentSessionId);
+  }
+
+  /** Pre-warm the first few chunks of a page to make playback feel instant */
+  async prepareFirstChunk(textChunks, count = 3) {
+    if (this.engine !== 'kokoro' || !textChunks || textChunks.length === 0) return;
+    for (let i = 0; i < Math.min(textChunks.length, count); i++) {
+      this._getAudioForChunk(textChunks, i);
+    }
+  }
+
+  _getAudioForChunk(textChunks, index, sessionId) {
+    if (index >= textChunks.length) return null;
+    if (this._audioCache.has(index)) return this._audioCache.get(index);
+
+    const chunk = textChunks[index].trim();
+    // Ignore ghost/empty chunks
+    if (!chunk || !/[a-zA-Z0-9]/.test(chunk)) return null;
+
+    const promise = (async () => {
+      let retryCount = 0;
+      const MAX_RETRIES = 1;
+
+      const fetchWithRetry = async () => {
+        try {
+          if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
+
+          const blob = await fetchTtsAudio(chunk, this.kokoroVoice, this.speed);
+          if (!blob || blob.size < 100 || this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
+
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio();
+          audio.preload = 'auto';
+
+          // Blob URL is already in memory — skip onloadeddata wait
+          audio.src = url;
+          audio.load();
+          return { audio, url };
+        } catch (e) {
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            await new Promise(r => setTimeout(r, 1000));
+            return fetchWithRetry();
+          }
+          console.warn('[TTS] Prefetch final failure for index', index, e);
+          return null;
+        }
+      };
+
+      return fetchWithRetry();
+    })();
+
+    this._audioCache.set(index, promise);
+    return promise;
+  }
+
+  async speakContinuous(textChunks, onChunkComplete, sessionId) {
+    if (sessionId) this.currentSessionId = sessionId;
     this._stopped = false;
+    this.isPaused = false;
+    this._failureCount = 0; // Fresh start for setiap page/session
 
     if (this.engine === 'kokoro') {
-      for (let i = 0; i < textChunks.length && !this._stopped; i++) {
-        await this._waitIfPaused();
-        if (this._stopped) break;
-        let chunk = textChunks[i].trim();
-        if (!chunk || chunk.length < 10) continue;
-        if (chunk.length > 200) chunk = chunk.substring(0, 200);
-        await this._speakKokoroChunk(chunk);
-        onChunkComplete?.(i + 1, textChunks.length);
-      }
-      return;
+      let currentIndex = 0;
+
+      const runLoop = async () => {
+        if (currentIndex >= textChunks.length || this._stopped) {
+          // Don't cleanup cache here — next page's prefetched entries must survive.
+          // Cache entries self-clean as they're consumed; stop()/startSession() handle full cleanup.
+          return;
+        }
+
+        // SMART PREFETCH: 5 chunks ahead, leveraging concurrent backend processing
+        for (let ahead = 1; ahead <= 5 && currentIndex + ahead < textChunks.length; ahead++) {
+          this._getAudioForChunk(textChunks, currentIndex + ahead, sessionId);
+        }
+
+        await this._waitIfPaused(sessionId);
+        if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
+
+        // Peak at the current chunk.
+        const audioPromise = this._getAudioForChunk(textChunks, currentIndex, sessionId);
+        
+        // If the chunk was 'skipped' by our regex, it returns null immediately.
+        // We need to know if it was skipped or if it failed.
+        const chunk = textChunks[currentIndex]?.trim();
+        const isGhost = !chunk || !/[a-zA-Z0-9]/.test(chunk);
+
+        if (isGhost) {
+          currentIndex++;
+          return runLoop();
+        }
+
+        const result = audioPromise ? await audioPromise : null;
+
+        if (result && !this._stopped && (!sessionId || this.currentSessionId === sessionId)) {
+          this._failureCount = 0; // Reset on success
+          onChunkComplete?.(currentIndex + 1, textChunks.length);
+          
+          await this._playAudioElement(result.audio, result.url, sessionId);
+          
+          this._audioCache.delete(currentIndex);
+          currentIndex++;
+          return runLoop();
+        } else {
+          // Failure Logic
+          this._failureCount = (this._failureCount || 0) + 1;
+          
+          if (this._failureCount >= 5) {
+            console.warn('[TTS] Consistent AI failure (5 chunks). Switching to Web Speech.');
+            const originalEngine = this.engine;
+            this.engine = 'web-speech';
+            await this.speakContinuous(textChunks.slice(currentIndex), (done, total) => {
+               onChunkComplete?.(currentIndex + done, textChunks.length);
+            }, sessionId);
+            this.engine = originalEngine;
+            return;
+          }
+
+          // Thermal Cooldown: Wait 3 seconds to let CPU recover
+          await new Promise(r => setTimeout(r, 3000));
+          currentIndex++;
+          return runLoop();
+        }
+      };
+
+      return runLoop();
     }
 
     if (!window.speechSynthesis) {
@@ -264,46 +387,80 @@ class TTSManager {
       return;
     }
 
-    for (let i = 0; i < textChunks.length && !this._stopped; i++) {
-      await this._waitIfPaused();
-      if (this._stopped) break;
+    // Queue ALL chunks at once for gapless browser-native transitions
+    // (browser speech queue handles back-to-back playback with no gaps)
+    window.speechSynthesis.cancel();
 
-      let chunk = textChunks[i].trim();
-      if (!chunk) continue;
-      if (chunk.length > 2000) chunk = chunk.substring(0, 2000);
+    return new Promise((resolve) => {
+      let totalQueued = 0;
+      let completed = 0;
 
-      await new Promise((resolve) => {
+      // Chrome bug workaround: speechSynthesis silently stops after ~15s.
+      // Periodic pause/resume keeps it alive.
+      const keepAlive = setInterval(() => {
+        if (this._stopped || (sessionId && this.currentSessionId !== sessionId) || completed >= totalQueued) {
+          clearInterval(keepAlive);
+          return;
+        }
+        if (window.speechSynthesis.speaking && !this.isPaused) {
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        }
+      }, 10000);
+
+      const finish = () => {
+        clearInterval(keepAlive);
+        this.currentUtterance = null;
+        resolve();
+      };
+
+      for (let i = 0; i < textChunks.length; i++) {
+        if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) break;
+
+        let chunk = textChunks[i].trim();
+        if (!chunk) continue;
+        if (chunk.length > 2000) chunk = chunk.substring(0, 2000);
+
         const u = this._createUtterance(chunk);
-        this.currentUtterance = u;
+        totalQueued++;
 
         u.onend = () => {
-          this.currentUtterance = null;
-          onChunkComplete?.(i + 1, textChunks.length);
-          resolve();
+          completed++;
+          onChunkComplete?.(completed, textChunks.length);
+          if (completed >= totalQueued) finish();
         };
         u.onerror = () => {
-          this.currentUtterance = null;
-          resolve();
+          completed++;
+          if (completed >= totalQueued) finish();
         };
 
-        if (this._stopped) return resolve();
+        window.speechSynthesis.speak(u);
+        this.currentUtterance = u;
+      }
 
-        if (this.isPaused) {
-          const checkPause = async () => {
-            await this._waitIfPaused();
-            if (!this._stopped) window.speechSynthesis.speak(u);
-          };
-          checkPause();
-        } else {
-          window.speechSynthesis.speak(u);
-        }
-      });
-    }
+      if (totalQueued === 0) finish();
+    });
   }
 
   startSession() {
     this._stopped = false;
     this.isPaused = false;
+    this._failureCount = 0;
+    this._cleanupCache(); // Clear old session's cache before new entries are added
+  }
+
+  _cleanupCache() {
+    for (const p of this._audioCache.values()) {
+      Promise.resolve(p).then((result) => {
+        if (result?.audio) {
+          result.audio.pause();
+          result.audio.removeAttribute('src');
+        }
+        // Delay revocation so in-flight loads don't hit ERR_FILE_NOT_FOUND
+        if (result?.url) setTimeout(() => URL.revokeObjectURL(result.url), 3000);
+      }).catch(() => {});
+    }
+    this._audioCache.clear();
   }
 
   stop() {
@@ -316,6 +473,7 @@ class TTSManager {
     }
     window.speechSynthesis?.cancel?.();
     this.currentUtterance = null;
+    this._cleanupCache();
   }
 
   setVoice(voice) {
@@ -324,6 +482,7 @@ class TTSManager {
 
   setEngine(engine) {
     this.engine = engine === 'kokoro' ? 'kokoro' : 'web-speech';
+    if (this.engine === 'kokoro') warmupKokoro();
   }
 
   setKokoroVoice(voice) {
@@ -334,8 +493,10 @@ class TTSManager {
     this.speed = speed;
   }
 
-  setVolume() {
-    if (this.currentUtterance) this.currentUtterance.volume = 1;
+  setVolume(vol) {
+    this.volume = vol ?? 1;
+    if (this.currentUtterance) this.currentUtterance.volume = this.volume;
+    if (this._currentAudio) this._currentAudio.volume = this.volume;
   }
 
   get hasActivePlayback() {

@@ -1,4 +1,5 @@
 import ePub from 'epubjs';
+import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -57,10 +58,6 @@ const processEpub = async (file) => {
     });
 };
 
-/** Minimum extractable text (chars) across sampled pages to accept a PDF. Rejects scanned/image-only PDFs. */
-const PDF_MIN_TEXT_CHARS = 80;
-const PDF_SAMPLE_PAGES = 5; // Sample first N pages to detect scanned PDFs
-
 const processPdf = async (file) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -69,21 +66,6 @@ const processPdf = async (file) => {
                 const loadingTask = pdfjs.getDocument({ data: e.target.result, wasmUrl: PDFJS_WASM_URL });
                 const pdf = await loadingTask.promise;
                 const metadata = await pdf.getMetadata();
-
-                // Reject scanned/image-based PDFs: sample pages and check for extractable text
-                let totalText = 0;
-                const pagesToSample = Math.min(PDF_SAMPLE_PAGES, pdf.numPages);
-                for (let p = 1; p <= pagesToSample; p++) {
-                    try {
-                        const text = await extractTextFromPdfDoc(pdf, p);
-                        totalText += (text || '').replace(/\s+/g, ' ').trim().length;
-                        if (totalText >= PDF_MIN_TEXT_CHARS) break;
-                    } catch (_) { /* skip failed pages */ }
-                }
-                if (totalText < PDF_MIN_TEXT_CHARS) {
-                    reject(new Error('This PDF appears to be scanned images. TTS requires text-based PDFs with selectable text.'));
-                    return;
-                }
 
                 let coverBlob = null;
                 try {
@@ -95,7 +77,7 @@ const processPdf = async (file) => {
                     const ctx = canvas.getContext('2d');
                     await page.render({ canvasContext: ctx, viewport }).promise;
                     coverBlob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
-                } catch (_) { /* ignore cover extraction errors */ }
+                } catch (err) { console.warn('Could not extract PDF cover:', err?.message); }
 
                 resolve({
                     title: metadata?.info?.Title || file.name.replace(/\.pdf$/i, ''),
@@ -143,35 +125,29 @@ export const extractTextFromSection = async (book, href, format = 'epub') => {
 export const extractPdfPageText = async (pdfSource, pageNum) => {
     const loadingTask = pdfjs.getDocument(typeof pdfSource === 'string' ? { url: pdfSource, wasmUrl: PDFJS_WASM_URL } : { data: pdfSource, wasmUrl: PDFJS_WASM_URL });
     const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-    return textContent.items.map(item => item.str).join(' ');
+    return extractTextFromPdfDoc(pdf, pageNum);
+};
+
+const filterTextContent = (textContent, height) => {
+    const headerThreshold = height * 0.92; // Slightly more aggressive
+    const footerThreshold = height * 0.08;
+    const filtered = textContent.items.filter(item => {
+        if (!item.transform) return true;
+        const y = item.transform[5];
+        return y > footerThreshold && y < headerThreshold;
+    });
+    return (filtered.length > 0 ? filtered : textContent.items).map(item => item.str).join(' ');
 };
 
 /** Extract text from a page using an already-loaded PDF document (avoids detached ArrayBuffer) */
 export const extractTextFromPdfDoc = async (pdfDoc, pageNum) => {
-    // #region agent log
-    const _dbg = (msg, data) => { fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4110de'},body:JSON.stringify({sessionId:'4110de',location:'fileProcessor.js:extractTextFromPdfDoc',message:msg,data:data||{},timestamp:Date.now()})}).catch(()=>{}); };
-    // #endregion
-    if (!pdfDoc) {
-        // #region agent log
-        _dbg('pdfDoc null', { pageNum });
-        // #endregion
-        return '';
-    }
+    if (!pdfDoc) return '';
     try {
         const page = await pdfDoc.getPage(pageNum);
         const textContent = await page.getTextContent();
-        const raw = textContent.items.map(item => item.str).join(' ');
-        const len = (raw || '').length;
-        // #region agent log
-        _dbg('extracted', { pageNum, itemCount: textContent?.items?.length ?? 0, textLen: len, preview: (raw || '').slice(0, 80) });
-        // #endregion
-        return raw;
+        const viewport = page.getViewport({ scale: 1.0 });
+        return filterTextContent(textContent, viewport.height);
     } catch (e) {
-        // #region agent log
-        _dbg('extract error', { pageNum, err: String(e?.message || e) });
-        // #endregion
         throw e;
     }
 };
@@ -231,7 +207,8 @@ export const extractTextFromPdfDocRange = async (pdfDoc, fromPage, toPage) => {
     for (let p = fromPage; p <= toPage; p++) {
         const page = await pdfDoc.getPage(p);
         const tc = await page.getTextContent();
-        texts.push(tc.items.map(item => item.str).join(' '));
+        const viewport = page.getViewport({ scale: 1.0 });
+        texts.push(filterTextContent(tc, viewport.height));
     }
     return texts.join('\n\n');
 };
@@ -243,7 +220,8 @@ export const extractPdfPagesText = async (pdfSource, fromPage, toPage) => {
     for (let p = fromPage; p <= toPage; p++) {
         const page = await pdf.getPage(p);
         const tc = await page.getTextContent();
-        texts.push(tc.items.map(item => item.str).join(' '));
+        const viewport = page.getViewport({ scale: 1.0 });
+        texts.push(filterTextContent(tc, viewport.height));
     }
     return texts.join('\n\n');
 };
@@ -277,8 +255,6 @@ export const getEpubToc = async (book) => {
  * @returns {Promise<Blob|null>} The cover image blob or null
  */
 export const extractEpubCoverBlob = async (arrayBuffer) => {
-    const JSZip = (await import('jszip')).default;
-
     try {
         const zip = await JSZip.loadAsync(arrayBuffer);
 

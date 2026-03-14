@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import booksRouter from './routes/books.js';
 import aiRouter from './routes/ai.js';
-import ttsRouter from './routes/tts.js';
+import ttsRouter, { preloadKokoro } from './routes/tts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,4 +31,5 @@ app.listen(PORT, () => {
   if (!process.env.GROQ_API_KEY) {
     console.warn('GROQ_API_KEY not set - AI features will fail');
   }
+  preloadKokoro();
 });

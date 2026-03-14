@@ -3,7 +3,7 @@ import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap } from 'lucide-reac
 import { usePlayback } from '../context/PlaybackContext';
 
 export default function MiniPlayer({ onOpenBook }) {
-  const { currentBook, isPlaying, progress, volume, speed, pause, stop, setVolume, setSpeed } = usePlayback();
+  const { currentBook, isPlaying, progress, volume, speed, pause, stop, setVolume, setSpeed, onNext, onPrev } = usePlayback();
   const [coverError, setCoverError] = useState(false);
   useEffect(() => setCoverError(false), [currentBook?.id]);
 
@@ -35,7 +35,14 @@ export default function MiniPlayer({ onOpenBook }) {
         </div>
       </div>
       <div className="dashboard-player-controls">
-        <button className="dashboard-control-btn" title="Previous"><SkipBack size={20} /></button>
+        <button
+          className="dashboard-control-btn"
+          onClick={() => onPrev?.()}
+          disabled={!onPrev}
+          title="Previous"
+        >
+          <SkipBack size={20} />
+        </button>
         <button
           className="dashboard-play-btn"
           onClick={isPlaying ? pause : () => onOpenBook?.(currentBook)}
@@ -43,7 +50,14 @@ export default function MiniPlayer({ onOpenBook }) {
         >
           {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
         </button>
-        <button className="dashboard-control-btn" title="Next"><SkipForward size={20} /></button>
+        <button
+          className="dashboard-control-btn"
+          onClick={() => onNext?.()}
+          disabled={!onNext}
+          title="Next"
+        >
+          <SkipForward size={20} />
+        </button>
       </div>
       <div className="dashboard-player-progress">
         <div className="dashboard-progress-bar">

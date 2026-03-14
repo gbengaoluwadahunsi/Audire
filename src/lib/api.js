@@ -65,6 +65,11 @@ export async function downloadBookFile(fileUrl) {
   return res.arrayBuffer();
 }
 
+/** URL for EPUB-converted-to-PDF (used when displaying EPUB as PDF) */
+export function getEpubPdfUrl(bookId) {
+  return url(`/api/books/${bookId}/pdf`);
+}
+
 export async function deleteBook(bookId) {
   return fetchJson(`/api/books/${bookId}`, { method: 'DELETE' });
 }
@@ -125,17 +130,3 @@ export async function aiVisualize(text) {
   return content ?? '';
 }
 
-/** Kokoro TTS via backend (faster CPU, no browser WASM) */
-export async function fetchTtsAudio(text, voice = 'af_heart', speed = 1.0) {
-  const base = API_BASE.replace(/\/$/, '');
-  const res = await fetch(`${base}/api/tts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice, speed }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || res.statusText);
-  }
-  return res.blob();
-}

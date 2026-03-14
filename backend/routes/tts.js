@@ -9,29 +9,51 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_PATH = path.join(__dirname, '../../debug-4110de.log');
-
-function dbg(msg, data) {
-  const line = JSON.stringify({ sessionId: '4110de', location: 'tts.js', message: msg, data: data || {}, timestamp: Date.now() }) + '\n';
-  try { fs.appendFileSync(LOG_PATH, line); } catch (_) {}
-}
 
 const router = express.Router();
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
 let kokoroInstance = null;
+
+/** GET /api/tts/health - Check if Kokoro TTS is available */
+router.get('/health', (_req, res) => {
+  res.json({ ok: true, engine: 'kokoro' });
+});
+
+/** GET /api/tts/warmup - Preload Kokoro model so first play is fast */
+router.get('/warmup', async (_req, res) => {
+  try {
+    await loadKokoro();
+    res.json({ ok: true, warmed: true });
+  } catch (e) {
+    console.error('[TTS] Warmup failed:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/** Start loading Kokoro in background (call on server startup) */
+export function preloadKokoro() {
+  loadKokoro().then(() => console.log('[TTS] Kokoro preloaded')).catch((e) => console.warn('[TTS] Kokoro preload failed:', e?.message));
+}
 let kokoroLoadPromise = null;
 
 async function loadKokoro() {
   if (kokoroInstance) return kokoroInstance;
   if (kokoroLoadPromise) return kokoroLoadPromise;
   kokoroLoadPromise = (async () => {
-    const { KokoroTTS } = await import('kokoro-js');
-    kokoroInstance = await KokoroTTS.from_pretrained(KOKORO_MODEL, {
-      dtype: 'q8',
-      device: 'cpu', // Native ONNX Runtime - much faster than browser WASM
-    });
-    return kokoroInstance;
+    try {
+      const { KokoroTTS } = await import('kokoro-js');
+      kokoroInstance = await KokoroTTS.from_pretrained(KOKORO_MODEL, {
+        dtype: 'q4', // Downgraded to 4-bit for 2x faster CPU generation
+        device: 'cpu',
+      });
+      console.log('[TTS] Kokoro model loaded successfully');
+      return kokoroInstance;
+    } catch (err) {
+      kokoroLoadPromise = null;
+      console.error('[TTS] Kokoro load failed:', err);
+      throw new Error(`Kokoro failed to load: ${err.message}. Ensure Node.js has internet access for model download.`);
+    }
   })();
   return kokoroLoadPromise;
 }
@@ -65,73 +87,77 @@ function float32ToWavBuffer(float32Data, sampleRate = 24000) {
   return buffer;
 }
 
-router.post('/', async (req, res) => {
-  const ts = () => new Date().toISOString();
+let activeGenerations = 0;
+const MAX_CONCURRENT = 2;
+const queue = [];
+
+async function processQueue() {
+  if (activeGenerations >= MAX_CONCURRENT || queue.length === 0) return;
+  activeGenerations++;
+  const { req, res, ts } = queue.shift();
+
   try {
-    dbg('request received', {});
-    console.log(`[TTS ${ts()}] Request received`);
     const { text, voice = 'af_heart', speed = 1.0 } = req.body || {};
     const clean = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
-    console.log(`[TTS ${ts()}] text length=${clean.length}, voice=${voice}, speed=${speed}, preview="${clean.slice(0, 50)}..."`);
-    if (!clean || clean.length < 3) {
-      console.log(`[TTS ${ts()}] Rejected: text too short`);
-      return res.status(400).json({ error: 'text required (min 3 chars)' });
-    }
-    if (clean.length > 2000) {
-      console.log(`[TTS ${ts()}] Rejected: text too long`);
-      return res.status(400).json({ error: 'text too long (max 2000 chars)' });
-    }
 
-    const MAX_CHARS = 200;
+    if (!clean) {
+      res.status(400).json({ error: 'Text is required' });
+      activeGenerations--;
+      processQueue();
+      return;
+    }
+    
+    const MAX_CHARS = 1000;
     const textToSpeak = clean.length > MAX_CHARS ? clean.slice(0, MAX_CHARS) : clean;
-    if (textToSpeak.length < clean.length) {
-      console.log(`[TTS ${ts()}] Truncated ${clean.length} -> ${textToSpeak.length} chars (model limit ~500 tokens)`);
-    }
 
-    console.log(`[TTS ${ts()}] Loading Kokoro model...`);
+    console.log(`[TTS ${ts()}] Processing: "${textToSpeak.slice(0, 30)}..."`);
     const tts = await loadKokoro();
-    console.log(`[TTS ${ts()}] Model ready, generating speech...`);
     const audio = await tts.generate(textToSpeak, { voice, speed });
+    
     let wav;
-    if (typeof audio?.save === 'function') {
-      const tmpPath = path.join(os.tmpdir(), `tts-${Date.now()}.wav`);
-      try {
-        await audio.save(tmpPath);
-        wav = fs.readFileSync(tmpPath);
-        fs.unlinkSync(tmpPath);
-      } catch (saveErr) {
-        console.error(`[TTS ${ts()}] audio.save failed:`, saveErr);
-        throw saveErr;
-      }
+    // Prefer direct Float32 extraction over temp file I/O
+    const rawAudio = typeof audio?.toRawAudio === 'function' ? await audio.toRawAudio() : null;
+    if (rawAudio) {
+      const samples = rawAudio instanceof Float32Array ? rawAudio : new Float32Array(rawAudio);
+      const sampleRate = audio?.sampling_rate ?? 24000;
+      wav = float32ToWavBuffer(samples, sampleRate);
+    } else if (typeof audio?.save === 'function') {
+      const tmpPath = path.join(os.tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+      await audio.save(tmpPath);
+      wav = fs.readFileSync(tmpPath);
+      fs.unlinkSync(tmpPath);
     } else {
       let samples = audio?.data ?? audio;
       if (samples?.data) samples = samples.data;
       if (Array.isArray(samples)) samples = new Float32Array(samples);
       else if (!(samples instanceof Float32Array)) samples = new Float32Array(samples || []);
       const sampleRate = audio?.sampling_rate ?? 24000;
-      console.log(`[TTS ${ts()}] Generated: ${samples.length} samples, ${sampleRate}Hz`);
-      if (samples.length === 0) {
-        console.warn(`[TTS ${ts()}] Empty audio - raw audio keys:`, audio ? Object.keys(audio) : 'null');
-      }
       wav = float32ToWavBuffer(samples, sampleRate);
     }
-    dbg('wav ready', { wavSize: wav.length });
-    console.log(`[TTS ${ts()}] WAV size=${wav.length} bytes, sending response`);
-    if (wav.length <= 44) {
-      console.warn(`[TTS ${ts()}] WAV is header-only (no audio data) - generation may have failed`);
-    }
 
-    res.set({
-      'Content-Type': 'audio/wav',
-      'Content-Length': wav.length,
-    });
+    res.set({ 'Content-Type': 'audio/wav', 'Content-Length': wav.length });
     res.send(wav);
-    console.log(`[TTS ${ts()}] Response sent OK`);
+    console.log(`[TTS ${ts()}] Done (${textToSpeak.length} chars)`);
   } catch (e) {
-    dbg('error', { err: String(e?.message || e) });
-    console.error(`[TTS ${ts()}] Error:`, e);
+    console.error(`[TTS ${ts()}] Queue error:`, e);
     res.status(500).json({ error: e.message || 'TTS failed' });
+  } finally {
+    activeGenerations--;
+    processQueue();
   }
+}
+
+const MAX_QUEUE = 20;
+
+router.post('/', async (req, res) => {
+  if (queue.length >= MAX_QUEUE) {
+    return res.status(429).json({ error: 'TTS queue full. Try again shortly.' });
+  }
+  const ts = () => new Date().toISOString();
+  queue.push({ req, res, ts });
+  processQueue();
+  // Kick off a second concurrent slot if available
+  processQueue();
 });
 
 export default router;

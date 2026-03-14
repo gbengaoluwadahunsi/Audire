@@ -70,8 +70,9 @@ function Dashboard({ onBackToLanding }) {
       setBooks(allBooks);
 
       // Auto-repair missing covers in the background (backend already filters invalid covers)
-      const booksNeedingCovers = allBooks.filter(b => !b.cover && b.file_url);
+      const booksNeedingCovers = allBooks.filter(b => !b.cover && b.file_url && !coverRepairAttempted.current.has(b.id));
       for (const book of booksNeedingCovers) {
+        coverRepairAttempted.current.add(book.id);
         repairBookCover(book).then((newCoverUrl) => {
           if (newCoverUrl) {
             setBooks(prev => prev.map(b => b.id === book.id ? { ...b, cover: newCoverUrl } : b));
@@ -365,7 +366,7 @@ function Dashboard({ onBackToLanding }) {
                           ) : (
                             <FileText size={40} color="var(--text-tertiary)" />
                           )}
-                          <span className="dashboard-book-badge">{book.format || 'epub'}</span>
+                          <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
                           <button
                             className="dashboard-book-delete"
                             onClick={(e) => {
@@ -487,7 +488,7 @@ function Dashboard({ onBackToLanding }) {
                               ) : (
                                 <FileText size={40} color="var(--text-tertiary)" />
                               )}
-                              <span className="dashboard-book-badge">{book.format || 'epub'}</span>
+                              <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
                               <button
                                 className="dashboard-book-collection"
                                 onClick={(e) => {
@@ -723,7 +724,7 @@ function SettingsPanel({ addToast }) {
       <div className="dashboard-settings-card">
         <h3>TTS Engine</h3>
         <p className="dashboard-settings-hint">
-          <strong>Kokoro</strong> — Natural voices via backend (requires backend running). <strong>Web Speech</strong> — Uses browser voices (Edge has best quality).
+          <strong>Kokoro</strong> — Natural voices via backend. Run <code>npm run dev:backend</code> in a separate terminal. <strong>Web Speech</strong> — Uses browser voices (Edge has best quality).
         </p>
         <select
           value={settings.ttsEngine || 'web-speech'}

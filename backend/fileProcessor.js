@@ -20,7 +20,7 @@ export async function processUpload(filePath, booksDir, coversDir) {
     return processEpub(filePath, id, coversDir);
   }
   if (ext === '.pdf') {
-    return processPdf(filePath, id);
+    return processPdf(filePath, id, coversDir);
   }
   throw new Error('Unsupported format. Use EPUB or PDF.');
 }

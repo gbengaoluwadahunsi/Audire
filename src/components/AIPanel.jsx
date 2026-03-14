@@ -9,8 +9,8 @@ const ACTIONS = [
   { id: 'visualize', label: 'Visualize', icon: ImageIcon },
 ];
 
-export default function AIPanel({ text, context, onClose }) {
-  const { explain, define, summarize, visualizeScene, isLoading, error, isReady } = useAI();
+export default function AIPanel({ text, context, isFullPage, onClose }) {
+  const { explain, define, summarize, visualizeScene, init, isLoading, error, isReady } = useAI();
   const [result, setResult] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [activeAction, setActiveAction] = useState(null);
@@ -18,7 +18,7 @@ export default function AIPanel({ text, context, onClose }) {
   const runAction = async (actionId) => {
     const t = (text || '').trim();
     if (!t) {
-      setResult('Please select some text first.');
+      setResult('Please select text or wait for the page to load.');
       return;
     }
 
@@ -87,7 +87,12 @@ export default function AIPanel({ text, context, onClose }) {
           )}
           <div className="ai-panel-selection">
             {text ? (
-              <p className="ai-panel-selection-text">"{text.slice(0, 150)}{text.length > 150 ? '...' : ''}"</p>
+              <div className="ai-panel-selection-text-wrap">
+                <p className="ai-panel-selection-label">
+                  {isFullPage ? 'Full current page' : 'Selected text'}
+                </p>
+                <div className="ai-panel-selection-text">"{text}"</div>
+              </div>
             ) : (
               <p className="ai-panel-selection-empty">Select text in the book to use AI.</p>
             )}

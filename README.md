@@ -1,157 +1,144 @@
 # Audire
 
-**Audire** is an open-source ebook reader with local TTS and AI—all running in your browser. No cloud, no API keys, no subscription.
+**Audire** is a free, open-source ebook reader with podcast-quality text-to-speech, AI-powered reading tools, and a clean modern UI. Supports EPUB and PDF — including scanned PDFs via built-in OCR.
 
-## Features
-
-- **TTS** – Microsoft Edge TTS via Web Speech API. Natural voices in Edge; works in any modern browser.
-- **Explain, Define & Visualize** – AI panel ready for your own AI provider (OpenAI, Groq, etc.).
-- **EPUB & PDF** – Securely upload and read your own books via Supabase.
-- **Highlights & Bookmarks** – Color-coded highlights and persistence across sections.
-- **Flashcards** – Auto-generated learning tools from your book chapters.
-- **Collections** – Organize your library into personalized shelves.
-
-## License
-
-Audire is open source under the **MIT License**. See [LICENSE](LICENSE) for details.
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ---
 
-## How to Run Audire on Your Laptop
+## Highlights
 
-Follow these steps to run Audire locally as an open-source project.
+- **Podcast-quality TTS** — Read any book aloud with [Kokoro](https://github.com/hexgrad/kokoro) (backend) or browser Web Speech. Gapless playback across pages.
+- **EPUB & PDF** — Upload and read your library. EPUBs are converted to PDF on-the-fly via Calibre for a unified experience.
+- **Scanned PDF OCR** — Pages without selectable text are automatically scanned with Tesseract.js.
+- **AI Assistant** — Explain, define, summarize, and visualize scenes using Groq (bring your own API key).
+- **Highlights, Bookmarks & Flashcards** — Color-coded annotations, flashcards auto-generated from chapters.
+- **Collections** — Organize books into custom shelves.
+- **PWA** — Installable on desktop and mobile. Works offline for cached content.
 
-### Step 1: Prerequisites
+## Tech Stack
 
-- **Node.js** (v18 or newer) – [Download](https://nodejs.org/)
-- **npm** (comes with Node.js)
-- **Chrome or Edge** (recommended for WebGPU support – needed for TTS and AI)
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 19, Vite 7, CSS |
+| Backend | Node.js, Express, PostgreSQL ([Neon](https://neon.tech)) |
+| TTS | Kokoro-js (backend) / Web Speech API (browser) |
+| EPUB→PDF | Calibre `ebook-convert` |
+| OCR | Tesseract.js |
+| AI | Groq API |
 
-### Step 2: Clone the Repository
+## Prerequisites
+
+- **Node.js** v18+
+- **PostgreSQL** — [Neon](https://neon.tech) free tier or any PostgreSQL instance
+- **Calibre** — For EPUB→PDF conversion ([download](https://calibre-ebook.com/download))
+- **Groq API key** *(optional)* — For AI features ([get one](https://console.groq.com))
+
+## Getting Started
+
+### 1. Clone & install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/audire.git
-cd audire
-```
-
-Or fork the repo on GitHub, then clone your fork.
-
-### Step 3: Install Dependencies
-
-```bash
+git clone https://github.com/gbengaoluwadahunsi/Audire.git
+cd Audire
 npm install
+cd backend && npm install && cd ..
 ```
 
-### Step 4: Set Up Supabase (Optional)
+### 2. Set up the database
 
-Audire uses Supabase for storing books and syncing progress. To enable cloud storage:
+1. Create a free project at [neon.tech](https://neon.tech)
+2. Run the schema from `backend/neon-schema.sql` in the SQL Editor
 
-1. Create a free account at [supabase.com](https://supabase.com)
-2. Create a new project
-3. In **Storage**, create a bucket named `books` with public access
-4. In **Table Editor**, create a `books` table with columns:
-   - `id` (uuid, primary key, default: `gen_random_uuid()`)
-   - `title` (text)
-   - `author` (text)
-   - `cover` (text, nullable)
-   - `file_url` (text)
-   - `format` (text, default: `'epub'`)
-   - `added_at` (timestamptz)
-   - `last_cfi` (text, nullable)
-   - `last_read` (timestamptz, nullable)
-   - `progress_percent` (numeric, default: 0)
-   - `total_pages` (integer, nullable)
-5. Run the migration in **SQL Editor** (see `supabase-migration.sql`)
-6. Copy your project URL and anon key from **Settings → API**
-7. Create a `.env` file in the project root (copy from `.env.example`):
+### 3. Configure environment
 
-```
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+**Root `.env`** (frontend):
+
+```env
+VITE_API_URL=http://localhost:3001
 ```
 
-Replace with your actual Supabase URL and anon key.
+**`backend/.env`**:
 
-> **Note:** Without Supabase, the app will fail when uploading or loading books. You need a Supabase project to use the full library features.
+```env
+DATABASE_URL=postgresql://user:password@host/dbname?sslmode=verify-full
+GROQ_API_KEY=your-groq-api-key
+# Optional: EBOOK_CONVERT_PATH=C:\Program Files\Calibre2\ebook-convert.exe
+```
 
-### Step 5: Run the Development Server
+### 4. Run
 
 ```bash
-npm run dev
+npm run dev:all
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:3001 |
 
-### Step 6: Build for Production (Optional)
+Or run them separately: `npm run dev` (frontend) / `npm run dev:backend` (backend).
 
-```bash
-npm run build
-npm run preview
-```
+## Calibre Setup
 
-The built files are in the `dist` folder. Deploy `dist` to any static host (Vercel, Netlify, etc.).
+EPUBs are converted to PDF for display. Install [Calibre](https://calibre-ebook.com/download) and ensure `ebook-convert` is in your PATH:
 
----
+| OS | Default path |
+|----|-------------|
+| Windows | `C:\Program Files\Calibre2\ebook-convert.exe` |
+| macOS | `/Applications/calibre.app/Contents/MacOS/ebook-convert` |
+| Linux | `ebook-convert` (in PATH after install) |
 
-## Browser Requirements
-
-- **Browser** – Works in any modern browser (Chrome, Edge, Safari, Firefox).
-- **TTS** – Web Speech API (Microsoft Edge TTS in Edge). Free, no API keys.
-- **LocalStorage** – Used for local settings and offline UI state.
-- **Supabase** – Used for cloud book storage and cross-device sync.
-
----
+Set `EBOOK_CONVERT_PATH` in `backend/.env` if Calibre is installed to a non-default location.
 
 ## Project Structure
 
 ```
-audire/
-├── src/
-│   ├── components/     # React components (Reader, Dashboard, etc.)
-│   ├── context/        # PlaybackContext, AIContext
-│   ├── lib/            # TTS, Supabase, file processing, bookmarks
-│   └── main.jsx
+Audire/
+├── src/                 # React frontend
+│   ├── components/      # Reader, Dashboard, AIPanel, etc.
+│   ├── context/         # PlaybackContext, AIContext
+│   └── lib/             # API, TTS manager, file processing, bookmarks
+├── backend/             # Express API server
+│   ├── routes/          # books, ai, tts endpoints
+│   ├── epubToPdf.js     # Calibre EPUB→PDF conversion
+│   └── neon-schema.sql  # Database schema
 ├── public/
-├── supabase-migration.sql
+│   ├── manifest.json    # PWA manifest
+│   └── sw.js            # Service worker
 └── package.json
 ```
 
----
+## Build & Deploy
 
-## Troubleshooting
-
-### "Failed to fetch" when uploading books
-
-This usually means the Supabase request failed. Try:
-
-1. **Check `.env`** – Ensure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set correctly. Restart the dev server after changing `.env`.
-2. **Verify Supabase setup** – In your Supabase project: Storage → bucket `books` (public), Table Editor → table `books` with the required columns.
-3. **Browser console** – Open DevTools (F12) → Console for the full error.
-4. **Network** – Disable VPN/proxy; ensure you can reach `*.supabase.co`.
-
-### TTS not working
-
-- **Supabase check** – If books don't load, verify your `VITE_SUPABASE_URL` in `.env`.
-- **TTS** – Uses browser speech synthesis. Best quality in Microsoft Edge (neural voices).
-- **EPUB Loading** – If a book gets stuck on "Loading," check the console (F12) for Supabase CORS or storage permissions.
-
-### Build warning: "Some chunks are larger than 500 kB"
-
-The main bundle is large due to TTS, AI, and PDF libraries. The app still works. To hide the warning, add `build.chunkSizeWarningLimit` to `vite.config.js`:
-
-```js
-export default defineConfig({
-  plugins: [react()],
-  build: { chunkSizeWarningLimit: 4000 },
-})
+```bash
+npm run build
 ```
 
-### Empty library or "Could not connect to your library"
+Output goes to `dist/`. Deploy the frontend to Vercel, Netlify, or any static host. The backend can run on Render, Railway, or your own server.
 
-Supabase isn’t configured or reachable. Set up `.env` and the Supabase project (see Step 4 above).
+## Self-Hosting Notes
 
----
+- Designed for **single-user / personal-library** use out of the box.
+- For multi-user deployment, add authentication, restrictive CORS, and rate limiting.
+- `GROQ_API_KEY` is optional — without it, AI features are disabled but reading and TTS work fine.
+- If the Kokoro backend is unavailable, TTS falls back to browser Web Speech automatically.
+
+## Known Limitations
+
+- OCR quality depends on scan resolution and may be slower on low-powered devices.
+- EPUB rendering is constrained by `epubjs` internals and browser iframe policies.
 
 ## Contributing
 
-Contributions are welcome. Open an issue or submit a pull request.
+Contributions are welcome!
+
+1. Fork the repo
+2. Create a branch (`git checkout -b feature/amazing`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push (`git push origin feature/amazing`)
+5. Open a Pull Request
+
+## License
+
+[MIT](LICENSE) — free for personal and commercial use.
