@@ -1382,10 +1382,31 @@
 }
 
 .dashboard-collection-card {
+  position: relative;
   padding: 20px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
+}
+
+.dashboard-collection-delete {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fda4af;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dashboard-collection-delete:hover {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fecdd3;
 }
 
 .dashboard-collection-card h3 {
@@ -1398,6 +1419,15 @@
   gap: 12px;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+
+.dashboard-collection-empty {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
 }
 
 .dashboard-collection-book-thumb {
