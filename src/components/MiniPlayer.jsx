@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap } from 'lucide-react';
 import { usePlayback } from '../context/PlaybackContext';
 
 export default function MiniPlayer({ onOpenBook }) {
   const { currentBook, isPlaying, progress, volume, speed, pause, stop, setVolume, setSpeed, onNext, onPrev } = usePlayback();
-  const [coverError, setCoverError] = useState(false);
-  useEffect(() => setCoverError(false), [currentBook?.id]);
 
   if (!currentBook) {
     return (
@@ -25,8 +23,14 @@ export default function MiniPlayer({ onOpenBook }) {
     <div className="dashboard-player">
       <div className="dashboard-player-info" onClick={() => onOpenBook?.(currentBook)}>
         <div className="dashboard-player-cover">
-          {currentBook.cover && !coverError ? (
-            <img src={currentBook.cover} alt="" onError={() => setCoverError(true)} />
+          {currentBook.cover ? (
+            <img
+              src={currentBook.cover}
+              alt=""
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
           ) : null}
         </div>
         <div className="dashboard-player-details">

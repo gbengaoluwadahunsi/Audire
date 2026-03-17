@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS books (
   cover text,
   file_url text NOT NULL,
   format text DEFAULT 'epub',
+  file_hash text,
   added_at timestamptz DEFAULT now(),
   last_cfi text,
   last_read timestamptz,
@@ -17,3 +18,4 @@ CREATE TABLE IF NOT EXISTS books (
 );
 
 CREATE INDEX IF NOT EXISTS idx_books_added_at ON books(added_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);

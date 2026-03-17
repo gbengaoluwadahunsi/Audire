@@ -13,7 +13,7 @@ export function getBookmarks(bookId) {
   try {
     const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     return all[bookId] || [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -39,7 +39,7 @@ export function getHighlights(bookId) {
   try {
     const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
     return all[bookId] || [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }

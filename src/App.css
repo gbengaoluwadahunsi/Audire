@@ -118,7 +118,7 @@
   position: relative;
   z-index: 10;
   text-align: center;
-  padding: 80px 24px 100px;
+  padding: 60px 24px 60px;
   max-width: 720px;
   margin: 0 auto;
 }
@@ -280,6 +280,110 @@
 .landing-btn-large {
   padding: 18px 36px;
   font-size: 1.05rem;
+}
+
+/* Model pre-download button */
+.landing-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.landing-model-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.landing-model-btn-error {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.landing-model-btn-error:hover {
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.landing-model-badge {
+  padding: 2px 7px;
+  background: var(--bg-hover);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+/* Model download progress */
+.landing-model-progress {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 260px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.landing-model-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.landing-model-progress-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.landing-model-progress-pct {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+.landing-model-progress-bar {
+  height: 4px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.landing-model-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.landing-model-progress-file {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+/* Model ready badge */
+.landing-model-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border: 1px solid color-mix(in srgb, #22c55e 30%, transparent);
+  color: #22c55e;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: var(--radius-lg);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ========================================
@@ -2163,6 +2267,12 @@
 .pdf-page-input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+.pdf-page-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .pdf-page-offset-hint {

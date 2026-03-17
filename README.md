@@ -8,8 +8,10 @@
 
 ## Highlights
 
-- **Podcast-quality TTS** — Read any book aloud with [Kokoro](https://github.com/hexgrad/kokoro) (backend) or browser Web Speech. Gapless playback across pages.
-- **EPUB & PDF** — Upload and read your library. EPUBs are converted to PDF on-the-fly via Calibre for a unified experience.
+- **Podcast-quality TTS** — Read any book aloud with Edge TTS (Microsoft Azure neural voices) or browser Web Speech. Gapless playback across pages.
+- **Smart fallback** — If Edge TTS is slow/unavailable, playback automatically continues with Web Speech.
+- **Seamless page controls** — While TTS is active, `next/prev` jumps and continues reading from the newly selected page.
+- **EPUB & PDF** — Upload and read your library. EPUB is read natively and PDF is supported directly.
 - **Scanned PDF OCR** — Pages without selectable text are automatically scanned with Tesseract.js.
 - **AI Assistant** — Explain, define, summarize, and visualize scenes using Groq (bring your own API key).
 - **Highlights, Bookmarks & Flashcards** — Color-coded annotations, flashcards auto-generated from chapters.
@@ -22,8 +24,8 @@
 |-------|-----------|
 | Frontend | React 19, Vite 7, CSS |
 | Backend | Node.js, Express, PostgreSQL ([Neon](https://neon.tech)) |
-| TTS | Kokoro-js (backend) / Web Speech API (browser) |
-| EPUB→PDF | Calibre `ebook-convert` |
+| TTS | Edge TTS (Microsoft Azure Neural) / Web Speech API (browser) |
+| EPUB→PDF | Calibre `ebook-convert` (optional fallback utility) |
 | OCR | Tesseract.js |
 | AI | Groq API |
 
@@ -31,7 +33,7 @@
 
 - **Node.js** v18+
 - **PostgreSQL** — [Neon](https://neon.tech) free tier or any PostgreSQL instance
-- **Calibre** — For EPUB→PDF conversion ([download](https://calibre-ebook.com/download))
+- **Calibre** *(optional)* — For EPUB→PDF fallback conversion ([download](https://calibre-ebook.com/download))
 - **Groq API key** *(optional)* — For AI features ([get one](https://console.groq.com))
 
 ## Getting Started
@@ -79,9 +81,9 @@ npm run dev:all
 
 Or run them separately: `npm run dev` (frontend) / `npm run dev:backend` (backend).
 
-## Calibre Setup
+## Optional Calibre Setup
 
-EPUBs are converted to PDF for display. Install [Calibre](https://calibre-ebook.com/download) and ensure `ebook-convert` is in your PATH:
+The reader uses native EPUB rendering by default. Calibre is only needed if you want server-side EPUB→PDF fallback conversion for problematic files. Install [Calibre](https://calibre-ebook.com/download) and ensure `ebook-convert` is in your PATH:
 
 | OS | Default path |
 |----|-------------|
@@ -89,7 +91,7 @@ EPUBs are converted to PDF for display. Install [Calibre](https://calibre-ebook.
 | macOS | `/Applications/calibre.app/Contents/MacOS/ebook-convert` |
 | Linux | `ebook-convert` (in PATH after install) |
 
-Set `EBOOK_CONVERT_PATH` in `backend/.env` if Calibre is installed to a non-default location.
+Set `EBOOK_CONVERT_PATH` in `backend/.env` only if Calibre is installed to a non-default location.
 
 ## Project Structure
 
@@ -117,17 +119,30 @@ npm run build
 
 Output goes to `dist/`. Deploy the frontend to Vercel, Netlify, or any static host. The backend can run on Render, Railway, or your own server.
 
+## Code Cleanup Notes
+
+- Recent cleanup removed unused frontend imports/helpers and dead state paths.
+- The frontend currently builds cleanly.
+- Lint errors that remain are primarily backend ESLint environment mismatches (`process`/`Buffer` in Node files) and React Fast Refresh export rules in context files.
+
 ## Self-Hosting Notes
 
 - Designed for **single-user / personal-library** use out of the box.
-- For multi-user deployment, add authentication, restrictive CORS, and rate limiting.
+- Recommended default distribution model: open-source + self-hosting.
+- For multi-user or commercial deployment, add authentication, restrictive CORS, and rate limiting before launch.
 - `GROQ_API_KEY` is optional — without it, AI features are disabled but reading and TTS work fine.
-- If the Kokoro backend is unavailable, TTS falls back to browser Web Speech automatically.
+- If the Edge TTS backend is unavailable, TTS falls back to browser Web Speech automatically.
+
+## Free Tier Note
+
+- Neon free tier is useful for development, demos, and early testing.
+- For higher traffic or commercial reliability targets, plan to upgrade to a paid database tier.
 
 ## Known Limitations
 
 - OCR quality depends on scan resolution and may be slower on low-powered devices.
 - EPUB rendering is constrained by `epubjs` internals and browser iframe policies.
+- This project does not include full SaaS-grade hardening by default (auth, strict tenancy, abuse controls).
 
 ## Contributing
 

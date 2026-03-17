@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { Book, Headphones, Zap, Shield, ArrowRight, Sparkles, Sun, Moon } from 'lucide-react';
 import { getSettings, saveSettings } from '../lib/settings';
 
+void motion;
+
 function LandingPage({ onEnter }) {
   const [theme, setTheme] = useState(() => getSettings().theme || 'dark');
 
@@ -91,6 +93,7 @@ function LandingPage({ onEnter }) {
           <button className="landing-btn-secondary" onClick={onEnter}>
             Open Library
           </button>
+
         </motion.div>
       </section>
 

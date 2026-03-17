@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+// eslint-disable-next-line no-unused-vars
+import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
 import { getCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
-import { KOKORO_VOICES } from '../lib/kokoroVoices';
+import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
 import Reader from './Reader';
 import MiniPlayer from './MiniPlayer';
 import { ToastContainer } from './Toast';
@@ -20,6 +21,23 @@ const SORT_OPTIONS = [
   { id: 'progress_percent', label: 'Progress' },
   { id: 'last_read', label: 'Last read' },
 ];
+
+function toUploadErrorMessage(fileName, err) {
+  const raw = String(err?.message || 'Upload failed');
+  const lower = raw.toLowerCase();
+  const isEpubCorrupt =
+    lower.includes('failed to open epub') ||
+    lower.includes('invalid epub') ||
+    lower.includes('container.xml') ||
+    lower.includes('package document') ||
+    lower.includes('invalid xml inside epub');
+
+  if (isEpubCorrupt) {
+    return `${fileName}: This EPUB appears corrupted or incomplete (missing required internal files).`;
+  }
+
+  return `${fileName}: ${raw}`;
+}
 
 function Dashboard({ onBackToLanding }) {
   const [activeTab, setActiveTab] = useState('library');
@@ -104,7 +122,7 @@ function Dashboard({ onBackToLanding }) {
       addToast(`Processing ${file.name}...`, 'info');
 
       try {
-        const bookData = await processFile(file);
+        await processFile(file);
         let uploadBlob = file;
 
         if (file.size > MAX_SIZE) {
@@ -122,7 +140,7 @@ function Dashboard({ onBackToLanding }) {
         addToast(`"${uploaded.title}" added to library`, 'success');
       } catch (err) {
         console.error(`Upload error for ${file.name}:`, err);
-        addToast(`${file.name}: ${err.message || 'Upload failed'}`, 'error');
+        addToast(toUploadErrorMessage(file.name, err), 'error');
       }
     }
 
@@ -137,7 +155,7 @@ function Dashboard({ onBackToLanding }) {
       addToast(`"${book.title}" removed`, 'success');
       await loadBooks();
       setShowDeleteConfirm(null);
-    } catch (err) {
+    } catch {
       addToast('Could not delete book', 'error');
     }
   };
@@ -699,8 +717,8 @@ function SettingsPanel({ addToast }) {
     ttsManager.setSpeed(settings.speed);
     ttsManager.setVoice(settings.ttsVoice);
     ttsManager.setEngine(settings.ttsEngine);
-    ttsManager.setKokoroVoice(settings.kokoroVoice);
-  }, [settings.speed, settings.ttsVoice, settings.ttsEngine, settings.kokoroVoice]);
+    ttsManager.setEdgeTtsVoice(settings.edgeTtsVoice);
+  }, [settings.speed, settings.ttsVoice, settings.ttsEngine, settings.edgeTtsVoice]);
 
   const update = (key, value) => {
     const next = { ...settings, [key]: value };
@@ -709,7 +727,7 @@ function SettingsPanel({ addToast }) {
     if (key === 'speed') ttsManager.setSpeed(value);
     if (key === 'ttsVoice') ttsManager.setVoice(value);
     if (key === 'ttsEngine') ttsManager.setEngine(value);
-    if (key === 'kokoroVoice') ttsManager.setKokoroVoice(value);
+    if (key === 'edgeTtsVoice') ttsManager.setEdgeTtsVoice(value);
     addToast('Settings saved', 'success');
   };
 
@@ -724,7 +742,7 @@ function SettingsPanel({ addToast }) {
       <div className="dashboard-settings-card">
         <h3>TTS Engine</h3>
         <p className="dashboard-settings-hint">
-          <strong>Kokoro</strong> — Natural voices via backend. Run <code>npm run dev:backend</code> in a separate terminal. <strong>Web Speech</strong> — Uses browser voices (Edge has best quality).
+          <strong>Edge TTS</strong> — High-quality neural voices powered by Microsoft Azure. Streams from server, no download needed. <strong>Web Speech</strong> — Uses browser built-in voices (Edge/Chrome have best quality).
         </p>
         <select
           value={settings.ttsEngine || 'web-speech'}
@@ -732,22 +750,22 @@ function SettingsPanel({ addToast }) {
           className="dashboard-settings-select"
         >
           <option value="web-speech">Web Speech (browser)</option>
-          <option value="kokoro">Kokoro (natural)</option>
+          <option value="edge-tts">Edge TTS (neural)</option>
         </select>
       </div>
-      {(settings.ttsEngine || 'web-speech') === 'kokoro' ? (
+      {(settings.ttsEngine || 'web-speech') === 'edge-tts' ? (
         <>
           <div className="dashboard-settings-card">
-            <h3>Kokoro Voice</h3>
+            <h3>Edge TTS Voice</h3>
             <p className="dashboard-settings-hint">
-              Natural-sounding voices. Heart and Bella are highest quality.
+              Neural voices from Microsoft Azure. Ava and Jenny are recommended.
             </p>
             <select
-              value={settings.kokoroVoice || 'af_heart'}
-              onChange={(e) => update('kokoroVoice', e.target.value)}
+              value={settings.edgeTtsVoice || 'en-US-AvaMultilingualNeural'}
+              onChange={(e) => update('edgeTtsVoice', e.target.value)}
               className="dashboard-settings-select"
             >
-              {KOKORO_VOICES.map((v) => (
+              {EDGE_TTS_VOICES.map((v) => (
                 <option key={v.id} value={v.id}>{v.name} ({v.grade})</option>
               ))}
             </select>

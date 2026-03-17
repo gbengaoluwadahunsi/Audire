@@ -10,7 +10,7 @@ const ACTIONS = [
 ];
 
 export default function AIPanel({ text, context, isFullPage, onClose }) {
-  const { explain, define, summarize, visualizeScene, init, isLoading, error, isReady } = useAI();
+  const { explain, define, summarize, visualizeScene, isLoading, error, isReady } = useAI();
   const [result, setResult] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [activeAction, setActiveAction] = useState(null);
@@ -45,17 +45,6 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
       setResult(err.message || 'Something went wrong.');
     } finally {
       setActiveAction(null);
-    }
-  };
-
-  const handleInit = async () => {
-    setResult('Loading AI model (first time may take a minute)...');
-    try {
-      const ok = await init();
-      if (ok) setResult('AI ready! Select text and choose an action.');
-      else setResult(error || 'Failed to load.');
-    } catch (err) {
-      setResult(err.message || 'Failed to load AI.');
     }
   };
 

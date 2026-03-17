@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
@@ -56,7 +57,9 @@ async function coverFileExists(bookId) {
     try {
       await fs.access(path.join(COVERS_DIR, `${bookId}${ext}`));
       return true;
-    } catch {}
+    } catch {
+      // file not found, continue to next
+    }
   }
   const files = await fs.readdir(COVERS_DIR).catch(() => []);
   return files.some((f) => f.startsWith(bookId) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
@@ -106,23 +109,74 @@ router.post('/', upload.single('file'), async (req, res) => {
     const baseUrl = getBaseUrl(req);
     const { bookData, coverPath } = await processUpload(req.file.path, BOOKS_DIR, COVERS_DIR);
 
+    // Calculate file hash for duplicate detection (requires file_hash column in DB)
+    const fileBuffer = await fs.readFile(req.file.path);
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    // Try to check for duplicates using file_hash (only works if column exists)
+    try {
+      const { rows: existingBooks } = await query(
+        'SELECT id, added_at FROM books WHERE file_hash = $1 ORDER BY added_at ASC',
+        [fileHash]
+      );
+
+      // Delete any older duplicate books with the same file hash
+      for (const existingBook of existingBooks) {
+        console.log(`Deleting duplicate book ${existingBook.id}, keeping newer upload`);
+        await query('DELETE FROM books WHERE id = $1', [existingBook.id]);
+        // Also delete the associated book file if it exists
+        const bookFilePath = path.join(BOOKS_DIR, `${existingBook.id}${bookData.format === 'pdf' ? '.pdf' : '.epub'}`);
+        await fs.unlink(bookFilePath).catch(() => {});
+      }
+    } catch (hashErr) {
+      // file_hash column doesn't exist yet - that's OK, duplicate detection will work once schema is updated
+      if (hashErr.code === '42703') {
+        // Column not found error, silently continue
+        console.log('file_hash column not yet in database, skipping duplicate detection');
+      } else {
+        throw hashErr;
+      }
+    }
+
     const fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
     const coverUrl = coverPath
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
 
-    await query(
-      `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())`,
-      [
-        bookData.id,
-        bookData.title,
-        bookData.author || null,
-        coverUrl,
-        fileUrl,
-        bookData.format || 'epub',
-      ]
-    );
+    // Try to INSERT with file_hash first, fall back without if column doesn't exist
+    try {
+      await query(
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        [
+          bookData.id,
+          bookData.title,
+          bookData.author || null,
+          coverUrl,
+          fileUrl,
+          bookData.format || 'epub',
+          fileHash,
+        ]
+      );
+    } catch (insertErr) {
+      // If file_hash column doesn't exist, retry without it
+      if (insertErr.code === '42703') {
+        await query(
+          `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now())`,
+          [
+            bookData.id,
+            bookData.title,
+            bookData.author || null,
+            coverUrl,
+            fileUrl,
+            bookData.format || 'epub',
+          ]
+        );
+      } else {
+        throw insertErr;
+      }
+    }
 
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [bookData.id]);
     res.status(201).json(rows[0]);
@@ -202,7 +256,9 @@ router.get('/:id/cover', async (req, res) => {
       try {
         await fs.access(coverPath);
         return res.sendFile(path.resolve(coverPath));
-      } catch {}
+      } catch {
+        // path not found, continue to next
+      }
     }
     // Fallback: find any file starting with book id (handles odd extensions)
     const files = await fs.readdir(COVERS_DIR).catch(() => []);
@@ -235,13 +291,13 @@ router.post('/:id/repair-cover', async (req, res) => {
 
     const { extractCover } = await import('../fileProcessor.js');
     const coverPath = await extractCover(filePath, book.id, book.format, COVERS_DIR);
-    if (!coverPath) {
-      return res.status(400).json({ error: 'Could not extract cover' });
+    
+    // If cover could be extracted, update the database
+    if (coverPath) {
+      const baseUrl = getBaseUrl(req);
+      const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
+      await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
     }
-
-    const baseUrl = getBaseUrl(req);
-    const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
-    await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
 
     const { rows: updated } = await query('SELECT * FROM books WHERE id = $1', [book.id]);
     res.json(updated[0]);
