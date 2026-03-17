@@ -146,14 +146,30 @@ function Reader({ bookData, onBack, addToast }) {
   }, []);
 
   useEffect(() => {
-    if (bookData?.format !== 'pdf' || totalPages <= 0 || !pdfRef.current) return;
+    if (bookData?.format !== 'pdf' || pdfLoading || totalPages <= 0 || !pdfRef.current) return;
     const phys = currentPage + pdfPageOffset;
     if (phys < 1 || phys > totalPages) return;
-    const rafId = requestAnimationFrame(() => {
-      if (pdfCanvasRef.current) renderPdfPage(phys);
-    });
-    return () => cancelAnimationFrame(rafId);
-  }, [bookData?.format, totalPages, currentPage, pdfPageOffset]);
+    let cancelled = false;
+    let tries = 0;
+    const maxTries = 12;
+
+    const tryRender = () => {
+      if (cancelled) return;
+      if (pdfCanvasRef.current) {
+        renderPdfPage(phys);
+        return;
+      }
+      if (tries >= maxTries) return;
+      tries += 1;
+      requestAnimationFrame(tryRender);
+    };
+
+    const rafId = requestAnimationFrame(tryRender);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [bookData?.format, pdfLoading, totalPages, currentPage, pdfPageOffset]);
 
   useEffect(() => {
     const container = pdfPageWrapperRef.current;
