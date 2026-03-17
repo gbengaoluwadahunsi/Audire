@@ -51,6 +51,46 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+function rewriteLegacyLocalhostUrl(value, baseUrl) {
+  if (!value || typeof value !== 'string') return value;
+  return value
+    .replace(/^http:\/\/localhost:3001/i, baseUrl)
+    .replace(/^http:\/\/127\.0\.0\.1:3001/i, baseUrl);
+}
+
+function normalizeBookUrls(book, baseUrl) {
+  if (!book) return book;
+  return {
+    ...book,
+    cover: rewriteLegacyLocalhostUrl(book.cover, baseUrl),
+    file_url: rewriteLegacyLocalhostUrl(book.file_url, baseUrl),
+  };
+}
+
+const REPAIR_RATE_WINDOW_MS = 30_000;
+const REPAIR_RATE_MAX = 8;
+const repairRateByIp = new Map();
+let repairQueue = Promise.resolve();
+
+function isRepairRateLimited(ip) {
+  const now = Date.now();
+  const recent = (repairRateByIp.get(ip) || []).filter((ts) => now - ts < REPAIR_RATE_WINDOW_MS);
+  if (recent.length >= REPAIR_RATE_MAX) {
+    repairRateByIp.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  repairRateByIp.set(ip, recent);
+  return false;
+}
+
+function enqueueRepairJob(job) {
+  const run = repairQueue.then(() => job());
+  // Keep queue alive even if one job fails.
+  repairQueue = run.catch(() => {});
+  return run;
+}
+
 async function coverFileExists(bookId) {
   const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
   for (const ext of exts) {
@@ -67,15 +107,16 @@ async function coverFileExists(bookId) {
 
 router.get('/', async (req, res) => {
   try {
+    const baseUrl = getBaseUrl(req);
     const { rows } = await query(
       'SELECT * FROM books ORDER BY added_at DESC'
     );
     const withValidCovers = await Promise.all(rows.map(async (b) => {
       if (b.cover && !(await coverFileExists(b.id))) {
         await query('UPDATE books SET cover = NULL WHERE id = $1', [b.id]);
-        return { ...b, cover: null };
+        return normalizeBookUrls({ ...b, cover: null }, baseUrl);
       }
-      return b;
+      return normalizeBookUrls(b, baseUrl);
     }));
     res.json(withValidCovers);
   } catch (err) {
@@ -86,6 +127,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
+    const baseUrl = getBaseUrl(req);
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     let book = rows[0];
@@ -93,7 +135,7 @@ router.get('/:id', async (req, res) => {
       await query('UPDATE books SET cover = NULL WHERE id = $1', [book.id]);
       book = { ...book, cover: null };
     }
-    res.json(book);
+    res.json(normalizeBookUrls(book, baseUrl));
   } catch (err) {
     console.error('Get book error:', err);
     res.status(500).json({ error: err.message });
@@ -179,7 +221,7 @@ router.post('/', upload.single('file'), async (req, res) => {
     }
 
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [bookData.id]);
-    res.status(201).json(rows[0]);
+    res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
   } catch (err) {
     console.error('Upload book error:', err);
     res.status(500).json({ error: err.message });
@@ -276,31 +318,43 @@ router.get('/:id/cover', async (req, res) => {
 });
 
 router.post('/:id/repair-cover', async (req, res) => {
+  const ip = String((req.get('x-forwarded-for') || req.ip || 'unknown')).split(',')[0].trim();
+  if (isRepairRateLimited(ip)) {
+    return res.status(429).json({ error: 'Too many cover repair requests. Please wait and try again.' });
+  }
+
   try {
-    const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Book not found' });
+    await enqueueRepairJob(async () => {
+      const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
+      if (!rows.length) {
+        res.status(404).json({ error: 'Book not found' });
+        return;
+      }
 
-    const book = rows[0];
-    const ext = book.format === 'pdf' ? '.pdf' : '.epub';
-    const filePath = path.join(BOOKS_DIR, `${book.id}${ext}`);
-    try {
-      await fs.access(filePath);
-    } catch {
-      return res.status(404).json({ error: 'File not found' });
-    }
+      const book = rows[0];
+      const ext = book.format === 'pdf' ? '.pdf' : '.epub';
+      const filePath = path.join(BOOKS_DIR, `${book.id}${ext}`);
+      try {
+        await fs.access(filePath);
+      } catch {
+        res.status(404).json({ error: 'File not found' });
+        return;
+      }
 
-    const { extractCover } = await import('../fileProcessor.js');
-    const coverPath = await extractCover(filePath, book.id, book.format, COVERS_DIR);
-    
-    // If cover could be extracted, update the database
-    if (coverPath) {
+      const { extractCover } = await import('../fileProcessor.js');
+      const coverPath = await extractCover(filePath, book.id, book.format, COVERS_DIR);
+
+      // If cover could be extracted, update the database.
+      if (coverPath) {
+        const baseUrl = getBaseUrl(req);
+        const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
+        await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
+      }
+
+      const { rows: updated } = await query('SELECT * FROM books WHERE id = $1', [book.id]);
       const baseUrl = getBaseUrl(req);
-      const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
-      await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
-    }
-
-    const { rows: updated } = await query('SELECT * FROM books WHERE id = $1', [book.id]);
-    res.json(updated[0]);
+      res.json(normalizeBookUrls(updated[0], baseUrl));
+    });
   } catch (err) {
     console.error('Repair cover error:', err);
     res.status(500).json({ error: err.message });

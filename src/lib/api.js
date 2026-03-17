@@ -9,6 +9,36 @@ function url(path) {
   return `${BASE.replace(/\/$/, '')}${path}`;
 }
 
+function apiOrigin() {
+  try {
+    if (!BASE) return null;
+    return new URL(BASE, window.location.origin).origin;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBackendUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+  if (rawUrl.startsWith('/')) return url(rawUrl);
+
+  const origin = apiOrigin();
+  if (!origin) return rawUrl;
+
+  return rawUrl
+    .replace(/^http:\/\/localhost:3001/i, origin)
+    .replace(/^http:\/\/127\.0\.0\.1:3001/i, origin);
+}
+
+function normalizeBookUrls(book) {
+  if (!book || typeof book !== 'object') return book;
+  return {
+    ...book,
+    cover: normalizeBackendUrl(book.cover),
+    file_url: normalizeBackendUrl(book.file_url),
+  };
+}
+
 async function fetchJson(path, opts = {}) {
   const res = await fetch(url(path), {
     ...opts,
@@ -22,7 +52,8 @@ async function fetchJson(path, opts = {}) {
 }
 
 export async function fetchBooks() {
-  return fetchJson('/api/books');
+  const books = await fetchJson('/api/books');
+  return Array.isArray(books) ? books.map(normalizeBookUrls) : [];
 }
 
 export async function uploadBook(fileBlob, fileName = 'book.epub') {
@@ -38,7 +69,8 @@ export async function uploadBook(fileBlob, fileName = 'book.epub') {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
   }
-  return res.json();
+  const created = await res.json();
+  return normalizeBookUrls(created);
 }
 
 export async function updateBookProgress(bookId, cfi, progressPercent = null, totalPages = null) {
@@ -53,7 +85,8 @@ export async function updateBookProgress(bookId, cfi, progressPercent = null, to
 }
 
 export async function downloadBookFile(fileUrl) {
-  const fullUrl = fileUrl?.startsWith('http') ? fileUrl : url(fileUrl || '');
+  const normalized = normalizeBackendUrl(fileUrl || '');
+  const fullUrl = normalized?.startsWith('http') ? normalized : url(normalized || '');
   const res = await fetch(fullUrl);
   if (!res.ok) throw new Error(res.statusText || 'Failed to download');
   return res.arrayBuffer();
@@ -72,14 +105,16 @@ export async function repairBookCover(book) {
   if (!book?.id || book.cover || !book.file_url) return null;
   try {
     // Skip if the book file doesn't exist (avoids 404 on repair-cover)
-    const fileUrl = book.file_url?.startsWith('http') ? book.file_url : url(`/api/books/${book.id}/file`);
+    const fileUrl = normalizeBackendUrl(book.file_url)?.startsWith('http')
+      ? normalizeBackendUrl(book.file_url)
+      : url(`/api/books/${book.id}/file`);
     const headRes = await fetch(fileUrl, { method: 'HEAD' });
     if (!headRes.ok) return null;
 
     const res = await fetch(url(`/api/books/${book.id}/repair-cover`), { method: 'POST' });
     if (!res.ok) return null;
     const updated = await res.json();
-    return updated?.cover || null;
+    return normalizeBackendUrl(updated?.cover || null);
   } catch {
     return null;
   }

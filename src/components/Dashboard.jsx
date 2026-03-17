@@ -57,6 +57,27 @@ function Dashboard({ onBackToLanding }) {
   const fileInputRef = useRef(null);
   const coverErrorIds = useRef(new Set());
   const coverRepairAttempted = useRef(new Set());
+  const coverRepairQueueRef = useRef(Promise.resolve());
+
+  const enqueueCoverRepair = (book, { refreshList = false } = {}) => {
+    if (!book?.id || !book.file_url || coverRepairAttempted.current.has(book.id)) return;
+
+    coverRepairAttempted.current.add(book.id);
+    coverRepairQueueRef.current = coverRepairQueueRef.current
+      .then(async () => {
+        const newCoverUrl = await repairBookCover(book);
+        if (newCoverUrl) {
+          coverErrorIds.current.delete(book.id);
+          setBooks(prev => prev.map(b => b.id === book.id ? { ...b, cover: newCoverUrl } : b));
+          if (refreshList) {
+            const latest = await fetchBooks();
+            setBooks(latest);
+          }
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      })
+      .catch(() => {});
+  };
 
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -88,15 +109,10 @@ function Dashboard({ onBackToLanding }) {
       setBooks(allBooks);
 
       // Auto-repair missing covers in the background (backend already filters invalid covers)
-      const booksNeedingCovers = allBooks.filter(b => !b.cover && b.file_url && !coverRepairAttempted.current.has(b.id));
-      for (const book of booksNeedingCovers) {
-        coverRepairAttempted.current.add(book.id);
-        repairBookCover(book).then((newCoverUrl) => {
-          if (newCoverUrl) {
-            setBooks(prev => prev.map(b => b.id === book.id ? { ...b, cover: newCoverUrl } : b));
-          }
-        }).catch(() => {});
-      }
+      const booksNeedingCovers = allBooks
+        .filter(b => !b.cover && b.file_url && !coverRepairAttempted.current.has(b.id))
+        .slice(0, 12);
+      for (const book of booksNeedingCovers) enqueueCoverRepair(book);
     } catch (err) {
       console.error('Failed to load books:', err);
       addToast('Could not connect to your library', 'error');
@@ -370,15 +386,7 @@ function Dashboard({ onBackToLanding }) {
                               onError={() => {
                                 coverErrorIds.current.add(book.id);
                                 setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                                if (book.file_url && !coverRepairAttempted.current.has(book.id)) {
-                                  coverRepairAttempted.current.add(book.id);
-                                  repairBookCover({ ...book, cover: null }).then((url) => {
-                                    if (url) {
-                                      coverErrorIds.current.delete(book.id);
-                                      fetchBooks().then((list) => setBooks(list));
-                                    }
-                                  }).catch(() => {});
-                                }
+                                enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
                               }}
                             />
                           ) : (
@@ -492,15 +500,7 @@ function Dashboard({ onBackToLanding }) {
                                   onError={() => {
                                     coverErrorIds.current.add(book.id);
                                     setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                                    if (book.file_url && !coverRepairAttempted.current.has(book.id)) {
-                                      coverRepairAttempted.current.add(book.id);
-                                      repairBookCover({ ...book, cover: null }).then((url) => {
-                                        if (url) {
-                                          coverErrorIds.current.delete(book.id);
-                                          fetchBooks().then((list) => setBooks(list));
-                                        }
-                                      }).catch(() => {});
-                                    }
+                                    enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
                                   }}
                                 />
                               ) : (
