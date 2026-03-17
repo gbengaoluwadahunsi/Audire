@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
-import { getCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
+import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
@@ -168,6 +168,19 @@ function Dashboard({ onBackToLanding }) {
   const handleDelete = async (book) => {
     try {
       await deleteBook(book.id);
+      const nextCollections = getCollections().map((c) => ({
+        ...c,
+        bookIds: c.bookIds.filter((id) => id !== book.id),
+      }));
+      saveCollections(nextCollections);
+      setCollections(nextCollections);
+      setSelectedCollection((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          bookIds: prev.bookIds.filter((id) => id !== book.id),
+        };
+      });
       addToast(`"${book.title}" removed`, 'success');
       await loadBooks();
       setShowDeleteConfirm(null);
@@ -562,53 +575,84 @@ function Dashboard({ onBackToLanding }) {
                   </div>
                 ) : (
                   <div className="dashboard-collections-list">
-                    {collections.map((c) => (
-                      <div key={c.id} className="dashboard-collection-card" onClick={() => setSelectedCollection(c)}>
-                        <h3>{c.name}</h3>
-                        <p>{c.bookIds.length} book{c.bookIds.length !== 1 ? 's' : ''}</p>
-                        <div className="dashboard-collection-books">
-                          {c.bookIds.slice(0, 6).map((bid) => {
-                            const b = books.find((x) => x.id === bid);
-                            return b ? (
-                              <div
-                                key={bid}
-                                className="dashboard-collection-book-thumb"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedBook(b);
-                                }}
-                              >
-                                {b.cover && !coverErrorIds.current.has(b.id) ? (
-                                  <img
-                                    src={b.cover}
-                                    alt=""
-                                    onError={() => {
-                                      coverErrorIds.current.add(b.id);
-                                      setBooks((prev) => prev.map((x) => (x.id === b.id ? { ...x, cover: null } : x)));
-                                      enqueueCoverRepair({ ...b, cover: null }, { refreshList: true });
-                                    }}
-                                  />
-                                ) : (
-                                  <FileText size={16} />
-                                )}
-                                <button
-                                  type="button"
-                                  className="dashboard-collection-book-remove"
-                                  title="Remove from collection"
+                    {collections.map((c) => {
+                      const visibleBooks = c.bookIds
+                        .map((bid) => books.find((b) => b.id === bid))
+                        .filter(Boolean);
+                      const visibleBookIds = visibleBooks.map((b) => b.id);
+
+                      return (
+                        <div
+                          key={c.id}
+                          className="dashboard-collection-card"
+                          onClick={() => {
+                            setSelectedCollection({ ...c, bookIds: visibleBookIds });
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="dashboard-collection-delete"
+                            title="Delete collection"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete collection "${c.name}"? Books will stay in your library.`)) {
+                                setCollections(removeCollection(c.id));
+                                if (selectedCollection?.id === c.id) setSelectedCollection(null);
+                              }
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <h3>{c.name}</h3>
+                          <p>
+                            {visibleBooks.length} book
+                            {visibleBooks.length !== 1 ? 's' : ''}
+                          </p>
+                          {visibleBooks.length === 0 ? (
+                            <div className="dashboard-collection-empty">No books in this collection yet.</div>
+                          ) : (
+                            <div className="dashboard-collection-books">
+                              {visibleBooks.slice(0, 6).map((b) => (
+                                <div
+                                  key={b.id}
+                                  className="dashboard-collection-book-thumb"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    removeBookFromCollection(c.id, b.id);
-                                    setCollections(getCollections());
+                                    setSelectedBook(b);
                                   }}
                                 >
-                                  <X size={12} />
-                                </button>
-                              </div>
-                            ) : null;
-                          })}
+                                  {b.cover && !coverErrorIds.current.has(b.id) ? (
+                                    <img
+                                      src={b.cover}
+                                      alt=""
+                                      onError={() => {
+                                        coverErrorIds.current.add(b.id);
+                                        setBooks((prev) => prev.map((x) => (x.id === b.id ? { ...x, cover: null } : x)));
+                                        enqueueCoverRepair({ ...b, cover: null }, { refreshList: true });
+                                      }}
+                                    />
+                                  ) : (
+                                    <FileText size={16} />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="dashboard-collection-book-remove"
+                                    title="Remove from collection"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeBookFromCollection(c.id, b.id);
+                                      setCollections(getCollections());
+                                    }}
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
