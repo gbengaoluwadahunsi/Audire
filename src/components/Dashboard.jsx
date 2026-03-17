@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
@@ -567,13 +567,16 @@ function Dashboard({ onBackToLanding }) {
                         <h3>{c.name}</h3>
                         <p>{c.bookIds.length} book{c.bookIds.length !== 1 ? 's' : ''}</p>
                         <div className="dashboard-collection-books">
-                          {c.bookIds.slice(0, 4).map((bid) => {
+                          {c.bookIds.slice(0, 6).map((bid) => {
                             const b = books.find((x) => x.id === bid);
                             return b ? (
                               <div
                                 key={bid}
                                 className="dashboard-collection-book-thumb"
-                                onClick={() => setSelectedBook(b)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedBook(b);
+                                }}
                               >
                                 {b.cover && !coverErrorIds.current.has(b.id) ? (
                                   <img
@@ -588,6 +591,18 @@ function Dashboard({ onBackToLanding }) {
                                 ) : (
                                   <FileText size={16} />
                                 )}
+                                <button
+                                  type="button"
+                                  className="dashboard-collection-book-remove"
+                                  title="Remove from collection"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeBookFromCollection(c.id, b.id);
+                                    setCollections(getCollections());
+                                  }}
+                                >
+                                  <X size={12} />
+                                </button>
                               </div>
                             ) : null;
                           })}
