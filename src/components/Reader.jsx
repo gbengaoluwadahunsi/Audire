@@ -23,13 +23,13 @@ import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
 import FlashcardsPanel from './FlashcardsPanel';
 
-function Reader({ bookData, onBack, onOpenBook, addToast }) {
+function Reader({ bookData, onBack, addToast }) {
   const viewerRef = useRef(null);
   const renditionRef = useRef(null);
   const bookRef = useRef(null);
   const pdfRef = useRef(null);
 
-  const { play, pause, setProgress: setPlaybackProgress, currentBook, isPlaying, setOnNext, setOnPrev } = usePlayback();
+  const { play, pause, setProgress: setPlaybackProgress, setOnNext, setOnPrev } = usePlayback();
 
   const [isPlayingTTS, setIsPlayingTTS] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
@@ -70,11 +70,13 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
   const pdfRenderLockRef = useRef(null);
   const isNavigatingRef = useRef(false);
   const currentPageRef = useRef(1);
+  const playbackSessionRef = useRef(0);
+  const playbackStartHrefRef = useRef(null);
+  const playbackStartPdfPageRef = useRef(null);
   const pageInputRef = useRef(null);
   const fontSizeRef = useRef(null);
   const selectedCfiRangeRef = useRef(null);
   const epubResizeObserverRef = useRef(null);
-  const [pdfScale, setPdfScale] = useState(1);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
 
   const settings = getSettings();
@@ -93,7 +95,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         try {
           sel = doc.getSelection?.()?.toString?.()?.trim() ?? '';
           ctx = doc.body?.textContent?.slice(0, 500) ?? '';
-        } catch (_) { }
+        } catch {
+          // Selection APIs can throw in cross-origin iframe edge cases.
+        }
       }
       setSelectedText(sel);
       setSelectionContext(ctx);
@@ -137,8 +141,8 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
     const s = getSettings();
     ttsManager.setSpeed(s.speed);
     ttsManager.setVoice(s.ttsVoice);
-    ttsManager.setKokoroVoice(s.kokoroVoice);
-    ttsManager.setEngine(s.ttsEngine); // last — triggers warmup if kokoro
+    ttsManager.setEdgeTtsVoice(s.edgeTtsVoice);
+    ttsManager.setEngine(s.ttsEngine);
   }, []);
 
   useEffect(() => {
@@ -216,7 +220,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
                 const ctx = doc.body?.textContent?.slice(0, 500) ?? '';
                 setSelectedText(sel);
                 setSelectionContext(ctx);
-              } catch (_) { }
+              } catch {
+                // Ignore annotation failures for incompatible CFI ranges.
+              }
             };
             doc.addEventListener('selectionchange', notifySelection);
 
@@ -229,7 +235,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
                   'fill-opacity': '0.4',
                   'mix-blend-mode': 'multiply',
                 });
-              } catch (_) { /* CFI may be in different section */ }
+              } catch {
+                // CFI may be in different section.
+              }
             });
 
             const style = doc.createElement('style');
@@ -279,7 +287,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
             const r = renditionRef.current;
             const el2 = viewerRef.current;
             if (el2 && r?.manager && el2.offsetWidth > 0 && el2.offsetHeight > 0) {
-              try { r.resize(el2.offsetWidth, el2.offsetHeight); } catch (_) {}
+              try { r.resize(el2.offsetWidth, el2.offsetHeight); } catch {
+                // Ignore transient resize errors from epubjs internals.
+              }
             }
           });
           ro.observe(el);
@@ -372,15 +382,17 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
 
   const goToPdfPage = async (contentPageNum) => {
     if (!pdfRef.current) return;
+    playbackStartPdfPageRef.current = contentPageNum;
     currentPageRef.current = contentPageNum;
     const phys = contentPageNum + pdfPageOffset;
     const contentTotal = Math.max(1, pdfRef.current.numPages - pdfPageOffset);
     if (contentPageNum < 1 || phys > pdfRef.current.numPages) return;
     isNavigatingRef.current = true;
     setCurrentPage(contentPageNum);
+    let extractedText = '';
     try {
-      const text = await extractTextFromPdfDoc(pdfRef.current, phys);
-      setPdfText(text);
+      extractedText = await extractTextFromPdfDoc(pdfRef.current, phys);
+      setPdfText(extractedText);
     } catch (err) {
       console.error('PDF page error:', err);
     } finally {
@@ -402,8 +414,8 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
       try {
         prevTask.cancel();
         await prevTask.promise;
-      } catch (e) {
-        if (e?.name !== 'RenderingCancelledException' && e?.name !== 'AbortException') throw e;
+      } catch (err) {
+        if (err?.name !== 'RenderingCancelledException' && err?.name !== 'AbortException') throw err;
       }
       pdfRenderTaskRef.current = null;
       await new Promise((r) => requestAnimationFrame(r));
@@ -433,8 +445,8 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
     pdfRenderTaskRef.current = renderTask;
     try {
       await renderTask.promise;
-    } catch (e) {
-      if (e?.name !== 'RenderingCancelledException' && e?.name !== 'AbortException') throw e;
+    } catch (err) {
+      if (err?.name !== 'RenderingCancelledException' && err?.name !== 'AbortException') throw err;
     } finally {
       if (pdfRenderTaskRef.current === renderTask) pdfRenderTaskRef.current = null;
     }
@@ -444,7 +456,6 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
 
     pdfViewportRef.current = { width: viewport.width, height: viewport.height };
     setPdfViewport({ width: viewport.width, height: viewport.height });
-    setPdfScale(1);
 
     const textLayerEl = pdfTextLayerRef.current;
     if (textLayerEl) {
@@ -466,18 +477,24 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
     }
   };
 
-  // Add a ref to track the current playback session ID
-  const playbackSessionRef = useRef(0);
   const handlePlayPauseRef = useRef(null);
   const ttsStartingRef = useRef(false);
+  const lastPlayToggleAtRef = useRef(0);
 
   const handlePlayPause = async () => {
+    // Guard against duplicate clicks/events firing in quick succession.
+    const now = Date.now();
+    if (now - lastPlayToggleAtRef.current < 250) return;
+    lastPlayToggleAtRef.current = now;
+
     // Unlock audio for delayed playback (browser autoplay policy)
     try {
       const silent = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
       silent.volume = 0;
       await silent.play();
-    } catch (_) { /* ignore */ }
+    } catch {
+      // Ignore autoplay unlock failures.
+    }
 
     // 1. If actually playing, then PAUSE
     if (isPlayingTTS) {
@@ -522,7 +539,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
               const curr = rendition?.currentLocation;
               const loc = (typeof curr === 'function' ? curr() : curr?.()) ?? null;
               if (loc?.start?.href) break;
-            } catch (_) { /* not ready */ }
+            } catch {
+              // Not ready yet.
+            }
           }
           await new Promise(r => setTimeout(r, 300));
         }
@@ -552,8 +571,14 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         let chunks = [];
         let lastEpubHref = null;
         let playbackPdfPage = bookData.format === 'pdf'
-          ? (currentPageRef.current || 1)
+          ? (playbackStartPdfPageRef.current || currentPageRef.current || 1)
           : currentPage;
+
+        const forcedStartHref = playbackStartHrefRef.current;
+        playbackStartHrefRef.current = null;
+        if (bookData.format === 'pdf') {
+          playbackStartPdfPageRef.current = null;
+        }
 
         if (bookData.format === 'pdf') {
           console.log('Reader: Playback page initialized to', playbackPdfPage, 'currentPageRef=', currentPageRef.current, 'currentPage=', currentPage);
@@ -572,7 +597,7 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
               const curr = rendition?.currentLocation;
               loc = (typeof curr === 'function' ? curr() : curr?.()) ?? null;
               if (loc?.start?.href) break;
-            } catch (_) {
+            } catch {
               /* rendition may not be ready yet */
             }
             if (attempt < 5) await new Promise(r => setTimeout(r, 400));
@@ -587,7 +612,7 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
             console.warn('Reader: No location found');
             break;
           }
-          let currentHref = loc.start.href;
+          let currentHref = forcedStartHref || loc.start.href;
 
           // Skip empty sections (covers, etc) — cap at 20 to avoid looping the entire spine
           const MAX_EMPTY_SECTIONS = 20;
@@ -619,7 +644,6 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
           // PDF - skip empty pages, falling back to OCR for scanned pages
           const MAX_SKIP_PAGES = 50;
           let skipped = 0;
-          let usedOcr = false;
           let ocrInitialized = false;
           console.log('Reader: Starting PDF skip loop, playbackPdfPage=', playbackPdfPage, 'contentTotalPages=', contentTotalPages);
           while (sessionId === playbackSessionRef.current && playbackPdfPage <= contentTotalPages && skipped < MAX_SKIP_PAGES) {
@@ -641,7 +665,6 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
                 const ocrText = await ocrPdfPage(pdfRef.current, from);
                 clean = (ocrText || '').replace(/\s+/g, ' ').trim();
                 if (clean.length > 30) {
-                  usedOcr = true;
                   addToast?.('OCR text extracted successfully!', 'success');
                 }
               } catch (ocrErr) {
@@ -687,18 +710,32 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
 
         if (sessionId !== playbackSessionRef.current) break;
 
-        setIsTTSLoading(false);
+        // No extra prefetch here — the prewarm from page-load already submitted
+        // chunk 0, and runLoop submits chunk N+1 while chunk N plays. Adding more
+        // jobs here would flood the serial worker queue and starve earlier chunks.
+
+        // For Web Speech: clear loading immediately (no generation delay, starts instantly).
+        // For Edge TTS: keep spinner up until the first chunk is generated and about to play,
+        // so there's no silent gap between the spinner disappearing and audio starting.
+        const isEdgeTTS = ttsManager.engine === 'edge-tts';
+        if (!isEdgeTTS) setIsTTSLoading(false);
+
         if (chunks && chunks.length > 0) {
           console.log(`Reader: Sending ${chunks.length} chunks to TTS engine`);
+          let firstChunkSignalled = !isEdgeTTS;
 
-          // Prefetch first chunks to reduce Kokoro startup latency
-          ttsManager.prepareFirstChunk(chunks);
           await ttsManager.speakContinuous(chunks, (done, total) => {
+            if (!firstChunkSignalled) {
+              firstChunkSignalled = true;
+              setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
+            }
             if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
               const ct = Math.max(1, totalPages - pdfPageOffset);
               setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
             }
           }, sessionId);
+
+          if (!firstChunkSignalled) setIsTTSLoading(false); // fallback: all chunks were skipped
         }
 
         // Check if session changed or stopped while reading
@@ -717,7 +754,7 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
             const r = renditionRef.current;
             const curr = r?.currentLocation;
             loc = (typeof curr === 'function' ? curr() : curr?.()) ?? null;
-          } catch (_) {
+          } catch {
             /* rendition may not be ready */
           }
           const hrefToUse = loc?.start?.href ?? lastEpubHref;
@@ -747,9 +784,10 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
       }
     } catch (err) {
       console.error('Reader: TTS Loop Error:', err);
-      addToast?.(err?.message || 'TTS failed. Try Web Speech or enable backend Kokoro.', 'error');
+      addToast?.(err?.message || 'TTS failed. Try switching to Web Speech engine.', 'error');
     } finally {
       ttsStartingRef.current = false;
+      setIsTTSLoading(false); // always clear spinner, even if session changed
       if (sessionId === playbackSessionRef.current) {
         setIsTTSLoading(false);
         // Only reset global UI states if we truly finished the whole book or errored out
@@ -766,17 +804,21 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
   handlePlayPauseRef.current = handlePlayPause;
 
   const stopTTSIfPlaying = () => {
-    if (isPlayingTTS) {
+    const active = isPlayingTTS || ttsManager.isPaused || ttsManager.hasActivePlayback;
+    if (active) {
       playbackSessionRef.current = 0;
       ttsManager.stop();
       ttsManager.isPaused = false;
       setIsPlayingTTS(false);
+      setIsTTSLoading(false);
       pause();
     }
   };
 
   const prevPage = async () => {
+    const wasActive = isPlayingTTS || ttsManager.isPaused || ttsManager.hasActivePlayback;
     stopTTSIfPlaying();
+    let moved = false;
     if (bookData.format === 'epub') {
       const rendition = renditionRef.current;
       const book = bookRef.current;
@@ -792,24 +834,36 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
         const section = (idx != null ? spine.get(idx) : null) || (href ? spine.get(href) : null) || spine.first?.();
         const prev = section?.prev?.() ?? (section?.index > 0 ? spine.get(section.index - 1) : null);
         if (prev?.href) {
+          playbackStartHrefRef.current = prev.href;
           await rendition.display(prev.href);
+          moved = true;
         } else {
           try {
             await rendition.prev();
-          } catch (_) {
+            moved = true;
+          } catch {
             addToast?.('Start of book', 'info');
           }
         }
-      } catch (e) {
+      } catch {
         addToast?.('Could not go to previous page.', 'info');
       }
     } else if (!isNavigatingRef.current) {
-      await goToPdfPage((currentPageRef.current || currentPage) - 1);
+      const target = (currentPageRef.current || currentPage) - 1;
+      await goToPdfPage(target);
+      moved = currentPageRef.current === target;
+    }
+
+    if (wasActive && moved) {
+      await new Promise((r) => setTimeout(r, 120));
+      await handlePlayPauseRef.current?.();
     }
   };
 
   const nextPage = async () => {
+    const wasActive = isPlayingTTS || ttsManager.isPaused || ttsManager.hasActivePlayback;
     stopTTSIfPlaying();
+    let moved = false;
     if (bookData.format === 'epub') {
       const rendition = renditionRef.current;
       const book = bookRef.current;
@@ -835,19 +889,29 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
           }
         }
         if (next?.href) {
+          playbackStartHrefRef.current = next.href;
           await rendition.display(next.href);
+          moved = true;
         } else {
           try {
             await rendition.next();
-          } catch (_) {
+            moved = true;
+          } catch {
             addToast?.('End of book', 'info');
           }
         }
-      } catch (e) {
+      } catch {
         addToast?.('Could not go to next page.', 'info');
       }
     } else if (!isNavigatingRef.current) {
-      await goToPdfPage((currentPageRef.current || currentPage) + 1);
+      const target = (currentPageRef.current || currentPage) + 1;
+      await goToPdfPage(target);
+      moved = currentPageRef.current === target;
+    }
+
+    if (wasActive && moved) {
+      await new Promise((r) => setTimeout(r, 120));
+      await handlePlayPauseRef.current?.();
     }
   };
 
@@ -891,7 +955,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
             'fill-opacity': '0.4',
             'mix-blend-mode': 'multiply',
           });
-        } catch (_) { /* annotation may fail for some CFIs */ }
+        } catch {
+          // Annotation may fail for some CFIs.
+        }
       } else if (cfi) {
         const doc = bookRef.current?.spine?.get(loc?.start?.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 200) || selectedText || '';
@@ -904,7 +970,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
             'fill-opacity': '0.4',
             'mix-blend-mode': 'multiply',
           });
-        } catch (_) { }
+        } catch {
+          // Ignore fallback annotation failures.
+        }
       } else {
         addToast?.('Select text first, then click the highlighter.', 'info');
       }
@@ -1221,7 +1289,9 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
                         if (bookData.format === 'epub') {
                           try {
                             renditionRef.current?.annotations?.remove?.(h.cfi, 'highlight');
-                          } catch (_) {}
+                          } catch {
+                            // Ignore scroll-sync edge cases during selection.
+                          }
                         }
                         removeHighlight(bookData.id, h.id);
                         setHighlights(getHighlights(bookData.id));
@@ -1299,7 +1369,10 @@ function Reader({ bookData, onBack, onOpenBook, addToast }) {
                       className="pdf-page-input"
                       aria-label="Page number"
                     />
-                    <span className="pdf-page-total">of {contentTotalPages}</span>
+                    <span className="pdf-page-total">
+                      <span className="pdf-page-total-label">of</span>
+                      <span className="pdf-page-total-value">{contentTotalPages}</span>
+                    </span>
                     {pdfPageOffset > 0 && (
                       <span className="pdf-page-offset-hint" title="Skipping front matter (roman numerals, blanks)">
                         (+{pdfPageOffset} skipped)

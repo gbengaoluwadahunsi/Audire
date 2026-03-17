@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, CheckCircle, Info, X } from 'lucide-react';
+
+void motion;
 
 const Toast = ({ message, type = 'info', onClose, duration = 5000 }) => {
     useEffect(() => {

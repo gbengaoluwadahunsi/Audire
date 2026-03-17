@@ -1,5 +1,5 @@
 /** Edge TTS neural voices — server-side Microsoft Azure Neural speech */
-export const KOKORO_VOICES = [
+export const EDGE_TTS_VOICES = [
   { id: 'en-US-AvaMultilingualNeural', name: 'Ava (US Female)', grade: 'A' },
   { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (US Male)', grade: 'A' },
   { id: 'en-US-JennyNeural', name: 'Jenny (US Female)', grade: 'A' },

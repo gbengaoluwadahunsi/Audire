@@ -1,4 +1,4 @@
-const CACHE = 'audire-v2';
+const CACHE = 'audire-v6';
 
 const PRECACHE = [
   '/',
@@ -26,6 +26,18 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin || e.request.method !== 'GET') return;
 
+  // Never cache: Vite dev URLs, node_modules, WASM, ONNX model files, API calls
+  const skip = url.pathname.startsWith('/node_modules/') ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/@vite/') ||
+    url.pathname.startsWith('/@react-refresh') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.endsWith('.wasm') ||
+    url.pathname.endsWith('.onnx') ||
+    url.pathname.includes('/onnx-community/') ||
+    url.pathname.includes('pdf.worker');
+  if (skip) return;
+
   // Navigation and HTML: network-first so deploys take effect immediately
   if (e.request.mode === 'navigate' || url.pathname.endsWith('.html') || url.pathname === '/') {
     e.respondWith(
@@ -47,6 +59,6 @@ self.addEventListener('fetch', (e) => {
         if (res.ok) caches.open(CACHE).then((c) => c.put(e.request, clone));
         return res;
       });
-    }).catch(() => caches.match('/index.html').then((fallback) => fallback || new Response('Offline', { status: 503 })))
+    }).catch(() => new Response('', { status: 503 }))
   );
 });

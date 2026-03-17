@@ -101,9 +101,9 @@ export const splitIntoSentenceChunks = (text) => {
     const trimmed = chunk.trim();
     if (!trimmed) return;
 
-    // 2. If chunk is very long (> 300 chars), sub-split it at natural pauses (comma, etc.)
-    // This allows the backend to return the first piece faster.
-    if (trimmed.length > 300) {
+    // 2. If chunk is very long (> 450 chars), sub-split it at natural pauses (comma, etc.)
+    // This prevents any single chunk from taking too long to generate.
+    if (trimmed.length > 450) {
       // Split at , ; : or -- but keep the delimiter attached to the previous chunk
       const subChunks = trimmed.split(/(?<=[,;:—])\s+/);
       subChunks.forEach(s => {
@@ -115,17 +115,18 @@ export const splitIntoSentenceChunks = (text) => {
     }
   });
 
-  // 3. Smart Merge: Join short chunks to reduce total request count.
-  // Fewer, larger chunks = fewer backend round-trips = smoother playback.
+  // 3. Smart Merge: join chunks until each is at least ~120 chars so that
+  // short sentences don't cause audible gaps between chunks during playback.
+  const TARGET_MIN_CHARS = 120;
   const optimized = [];
+  let buffer = '';
   for (let i = 0; i < finalChunks.length; i++) {
-    let chunk = finalChunks[i];
-    // If chunk is short and there is a next chunk, merge them
-    if (chunk.length < 40 && i + 1 < finalChunks.length) {
-      optimized.push(chunk + ' ' + finalChunks[i + 1]);
-      i++; // Skip the next one we just merged
-    } else {
-      optimized.push(chunk);
+    buffer = buffer ? buffer + ' ' + finalChunks[i] : finalChunks[i];
+    const isLast = i === finalChunks.length - 1;
+    // Flush buffer when it's long enough OR we've hit the last chunk
+    if (buffer.length >= TARGET_MIN_CHARS || isLast) {
+      optimized.push(buffer);
+      buffer = '';
     }
   }
 

@@ -1,4 +1,3 @@
-import ePub from 'epubjs';
 import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -21,19 +20,67 @@ export const processFile = async (file) => {
     }
 };
 
+const parseXml = (xmlText) => {
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    const parseError = doc.querySelector('parsererror');
+    if (parseError) throw new Error('Invalid XML inside EPUB package');
+    return doc;
+};
+
+const firstText = (doc, selectors = []) => {
+    for (const selector of selectors) {
+        const node = doc.querySelector(selector);
+        const text = node?.textContent?.trim();
+        if (text) return text;
+    }
+    return '';
+};
+
+const extractEpubMetadata = async (arrayBuffer, fileName = 'book.epub') => {
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    const containerFile = zip.file('META-INF/container.xml');
+    if (!containerFile) {
+        throw new Error('Invalid EPUB: missing META-INF/container.xml');
+    }
+
+    const containerXml = await containerFile.async('text');
+    const containerDoc = parseXml(containerXml);
+    const rootfile = containerDoc.querySelector('rootfile');
+    const opfPath = rootfile?.getAttribute('full-path');
+    if (!opfPath) {
+        throw new Error('Invalid EPUB: package document path not found in container.xml');
+    }
+
+    const opfFile = zip.file(opfPath);
+    if (!opfFile) {
+        throw new Error(`Invalid EPUB: package document not found (${opfPath})`);
+    }
+
+    const opfXml = await opfFile.async('text');
+    const opfDoc = parseXml(opfXml);
+
+    const title = firstText(opfDoc, ['metadata > title', 'metadata > dc\\:title', 'dc\\:title'])
+        || fileName.replace(/\.epub$/i, '');
+    const author = firstText(opfDoc, ['metadata > creator', 'metadata > dc\\:creator', 'dc\\:creator'])
+        || 'Unknown Author';
+
+    return { title, author };
+};
+
 const processEpub = async (file) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                const book = ePub(e.target.result);
-                const metadata = await book.loaded.metadata;
+                const data = e.target.result;
+                const metadata = await extractEpubMetadata(data, file.name);
 
                 let coverUrl = null;
                 let coverBlob = null;
 
                 try {
-                    coverBlob = await extractEpubCoverBlob(e.target.result);
+                    coverBlob = await extractEpubCoverBlob(data);
                     if (coverBlob) {
                         coverUrl = URL.createObjectURL(coverBlob);
                     }
@@ -43,14 +90,14 @@ const processEpub = async (file) => {
 
                 resolve({
                     title: metadata.title,
-                    author: metadata.creator,
+                    author: metadata.author,
                     cover: coverUrl,
                     coverBlob,
                     format: 'epub',
-                    data: e.target.result
+                    data
                 });
             } catch (err) {
-                reject(err);
+                reject(new Error(`Failed to open EPUB: ${err?.message || 'The file appears corrupted or incomplete.'}`));
             }
         };
         reader.onerror = reject;
@@ -142,14 +189,10 @@ const filterTextContent = (textContent, height) => {
 /** Extract text from a page using an already-loaded PDF document (avoids detached ArrayBuffer) */
 export const extractTextFromPdfDoc = async (pdfDoc, pageNum) => {
     if (!pdfDoc) return '';
-    try {
-        const page = await pdfDoc.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const viewport = page.getViewport({ scale: 1.0 });
-        return filterTextContent(textContent, viewport.height);
-    } catch (e) {
-        throw e;
-    }
+    const page = await pdfDoc.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1.0 });
+    return filterTextContent(textContent, viewport.height);
 };
 
 /**
@@ -177,7 +220,9 @@ export const searchInBook = async ({ book, pdfDoc, format, query }) => {
                     matches.push({ href: section.href, snippet });
                     idx = lower.indexOf(q, idx + 1);
                 }
-            } catch (_) { /* skip failed sections */ }
+            } catch {
+                // Skip failed sections.
+            }
             section = section.next?.();
         }
     } else if (format === 'pdf' && pdfDoc) {
@@ -193,7 +238,9 @@ export const searchInBook = async ({ book, pdfDoc, format, query }) => {
                     matches.push({ page: p, snippet });
                     idx = lower.indexOf(q, idx + 1);
                 }
-            } catch (_) { /* skip failed pages */ }
+            } catch {
+                // Skip failed pages.
+            }
         }
     }
 
@@ -242,7 +289,7 @@ export const getEpubToc = async (book) => {
                 label: sub.label,
             })),
         }));
-    } catch (e) {
+    } catch {
         return [];
     }
 };

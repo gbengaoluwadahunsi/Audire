@@ -63,7 +63,7 @@ async function processEpub(filePath, id, coversDir) {
         continue;
       }
     }
-  } catch (err) {
+  } catch {
     // Fall through to custom extraction
   }
 

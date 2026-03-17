@@ -21,12 +21,6 @@ async function fetchJson(path, opts = {}) {
   return res.json();
 }
 
-async function fetchBlob(path) {
-  const res = await fetch(url(path));
-  if (!res.ok) throw new Error(res.statusText || 'Failed to fetch');
-  return res.arrayBuffer();
-}
-
 export async function fetchBooks() {
   return fetchJson('/api/books');
 }

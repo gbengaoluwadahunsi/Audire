@@ -29,7 +29,8 @@ async function findEbookConvert() {
       }
       cachedEbookConvert = p;
       return p;
-    } catch (_) {
+    } catch {
+      // path not found, continue to next
       continue;
     }
   }
