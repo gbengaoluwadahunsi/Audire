@@ -481,14 +481,14 @@ function Dashboard({ onBackToLanding }) {
                         Delete Collection
                       </button>
                     </header>
-                    <div className="dashboard-grid">
+                    <div className="dashboard-grid collection-detail-grid">
                       {selectedCollection.bookIds.map(bid => {
                         const book = books.find(b => b.id === bid);
                         if (!book) return null;
                         return (
                           <motion.div
                             key={book.id}
-                            className="dashboard-book-card"
+                            className="dashboard-book-card collection-book-card"
                             onClick={() => setSelectedBook(book)}
                             whileHover={{ y: -6, transition: { duration: 0.2 } }}
                           >
@@ -507,10 +507,18 @@ function Dashboard({ onBackToLanding }) {
                                 <FileText size={40} color="var(--text-tertiary)" />
                               )}
                               <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
+                            </div>
+                            <div className="dashboard-book-info">
+                              <h3>{book.title}</h3>
+                              <p>{book.author || 'Unknown'}</p>
+                            </div>
+                            <div className="collection-book-actions" onClick={(e) => e.stopPropagation()}>
                               <button
-                                className="dashboard-book-collection"
-                                onClick={(e) => {
-                                  e.stopPropagation();
+                                type="button"
+                                className="collection-book-action"
+                                onClick={() => {
+                                  const ok = confirm(`Remove "${book.title}" from "${selectedCollection.name}"?`);
+                                  if (!ok) return;
                                   removeBookFromCollection(selectedCollection.id, book.id);
                                   setCollections(getCollections());
                                   setSelectedCollection(prev => ({
@@ -518,14 +526,18 @@ function Dashboard({ onBackToLanding }) {
                                     bookIds: prev.bookIds.filter(id => id !== book.id)
                                   }));
                                 }}
-                                title="Remove from collection"
+                                title="Remove from this collection"
                               >
-                                <X size={14} />
+                                Remove
                               </button>
-                            </div>
-                            <div className="dashboard-book-info">
-                              <h3>{book.title}</h3>
-                              <p>{book.author || 'Unknown'}</p>
+                              <button
+                                type="button"
+                                className="collection-book-action danger"
+                                onClick={() => setShowDeleteConfirm(book.id)}
+                                title="Delete book from library"
+                              >
+                                Delete
+                              </button>
                             </div>
                           </motion.div>
                         );
@@ -570,15 +582,7 @@ function Dashboard({ onBackToLanding }) {
                                     onError={() => {
                                       coverErrorIds.current.add(b.id);
                                       setBooks((prev) => prev.map((x) => (x.id === b.id ? { ...x, cover: null } : x)));
-                                      if (b.file_url && !coverRepairAttempted.current.has(b.id)) {
-                                        coverRepairAttempted.current.add(b.id);
-                                        repairBookCover({ ...b, cover: null }).then((url) => {
-                                          if (url) {
-                                            coverErrorIds.current.delete(b.id);
-                                            fetchBooks().then((list) => setBooks(list));
-                                          }
-                                        }).catch(() => {});
-                                      }
+                                      enqueueCoverRepair({ ...b, cover: null }, { refreshList: true });
                                     }}
                                   />
                                 ) : (
