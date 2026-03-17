@@ -1395,13 +1395,13 @@
 
 .dashboard-collection-books {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   margin-top: 12px;
 }
 
 .dashboard-collection-book-thumb {
-  width: 40px;
-  height: 56px;
+  width: 56px;
+  height: 78px;
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-elevated);
@@ -1409,12 +1409,53 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--border);
 }
 
 .dashboard-collection-book-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.collection-detail-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.collection-book-card {
+  padding-bottom: 12px;
+}
+
+.collection-book-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.collection-book-action {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.collection-book-action:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.collection-book-action.danger {
+  color: #fda4af;
+  border-color: rgba(244, 63, 94, 0.35);
+}
+
+.collection-book-action.danger:hover {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fecdd3;
 }
 
 .dashboard-settings-select {
