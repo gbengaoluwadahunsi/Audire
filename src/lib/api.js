@@ -56,6 +56,20 @@ export async function fetchBooks() {
   return Array.isArray(books) ? books.map(normalizeBookUrls) : [];
 }
 
+export async function importOrphanBook(bookId) {
+  const res = await fetch(url('/api/books/import-orphan'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bookId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  const created = await res.json();
+  return normalizeBookUrls(created);
+}
+
 export async function uploadBook(fileBlob, fileName = 'book.epub') {
   const form = new FormData();
   form.append('file', fileBlob, fileName);

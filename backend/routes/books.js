@@ -15,6 +15,7 @@ import {
   deleteBookFile,
   deleteCover,
   isSupabaseUrl,
+  getBookFilePublicUrl,
 } from '../supabaseStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -171,14 +172,111 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+/** Import a book that exists in Supabase Storage but has no DB record (orphaned upload). */
+router.post('/import-orphan', async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(400).json({ error: 'Supabase Storage is not configured' });
+    }
+    const { bookId } = req.body;
+    if (!bookId || typeof bookId !== 'string') {
+      return res.status(400).json({ error: 'bookId is required' });
+    }
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(bookId.trim())) {
+      return res.status(400).json({ error: 'Invalid bookId format (expected UUID)' });
+    }
+    const id = bookId.trim();
+
+    // Check if already in DB
+    const { rows: existing } = await query('SELECT id FROM books WHERE id = $1', [id]);
+    if (existing.length) {
+      return res.status(409).json({ error: 'Book already in library', book: existing[0] });
+    }
+
+    // Try PDF first, then EPUB
+    let fileUrl = null;
+    let format = null;
+    for (const fmt of ['pdf', 'epub']) {
+      const url = getBookFilePublicUrl(id, fmt);
+      const resp = await fetch(url);
+      if (resp.ok) {
+        fileUrl = url;
+        format = fmt;
+        break;
+      }
+    }
+    if (!fileUrl || !format) {
+      return res.status(404).json({
+        error: 'File not found in Supabase Storage. Ensure the file exists in the Books bucket (e.g. <uuid>.pdf or <uuid>.epub).',
+      });
+    }
+
+    // Fetch file and extract metadata (filename must be {id}.ext so processUpload gets correct id)
+    const resp = await fetch(fileUrl);
+    const fileBuffer = Buffer.from(await resp.arrayBuffer());
+    const ext = format === 'pdf' ? '.pdf' : '.epub';
+    const tmpPath = path.join(BOOKS_DIR, `${id}${ext}`);
+    await fs.writeFile(tmpPath, fileBuffer);
+
+    let bookData;
+    let coverPath = null;
+    try {
+      const result = await processUpload(tmpPath, BOOKS_DIR, COVERS_DIR);
+      bookData = result.bookData;
+      coverPath = result.coverPath;
+    } finally {
+      await fs.unlink(tmpPath).catch(() => {});
+    }
+
+    let coverUrl = null;
+    if (coverPath) {
+      const coverBuf = await fs.readFile(coverPath);
+      const coverExt = path.extname(coverPath).toLowerCase();
+      coverUrl = await uploadCover(id, coverBuf, coverExt);
+      await fs.unlink(coverPath).catch(() => {});
+    }
+
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const baseUrl = getBaseUrl(req);
+
+    try {
+      await query(
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        [bookData.id, bookData.title, bookData.author || null, coverUrl, fileUrl, format, fileHash]
+      );
+    } catch (insertErr) {
+      if (insertErr.code === '42703') {
+        await query(
+          `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now())`,
+          [bookData.id, bookData.title, bookData.author || null, coverUrl, fileUrl, format]
+        );
+      } else {
+        throw insertErr;
+      }
+    }
+
+    const { rows } = await query('SELECT * FROM books WHERE id = $1', [id]);
+    res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
+  } catch (err) {
+    console.error('Import orphan error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/', upload.single('file'), async (req, res) => {
+  let bookData, uploadedToSupabase = false;
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const baseUrl = getBaseUrl(req);
-    const { bookData, coverPath } = await processUpload(req.file.path, BOOKS_DIR, COVERS_DIR);
+    const processed = await processUpload(req.file.path, BOOKS_DIR, COVERS_DIR);
+    bookData = processed.bookData;
+    const coverPath = processed.coverPath;
 
     // Calculate file hash for duplicate detection (requires file_hash column in DB)
     const fileBuffer = await fs.readFile(req.file.path);
@@ -226,6 +324,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       }
       await fs.unlink(req.file.path).catch(() => {});
       if (coverPath) await fs.unlink(coverPath).catch(() => {});
+      uploadedToSupabase = true;
     } else {
       fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
       coverUrl = coverPath ? `${baseUrl}/api/books/${bookData.id}/cover` : null;
@@ -269,6 +368,11 @@ router.post('/', upload.single('file'), async (req, res) => {
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [bookData.id]);
     res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
   } catch (err) {
+    // If we uploaded to Supabase but INSERT failed, remove the orphan
+    if (typeof uploadedToSupabase !== 'undefined' && uploadedToSupabase && bookData) {
+      await deleteBookFile(bookData.id, bookData.format).catch((e) => console.warn('Orphan cleanup:', e?.message));
+      await deleteCover(bookData.id).catch(() => {});
+    }
     console.error('Upload book error:', err);
     res.status(500).json({ error: err.message });
   }
