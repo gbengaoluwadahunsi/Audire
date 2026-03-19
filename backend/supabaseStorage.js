@@ -63,3 +63,12 @@ export function isSupabaseUrl(url) {
   if (!url || typeof url !== 'string') return false;
   return url.includes('supabase') && url.includes('storage');
 }
+
+/** Get public URL for a book file in Supabase Storage. */
+export function getBookFilePublicUrl(bookId, format) {
+  if (!supabase) return null;
+  const ext = format === 'pdf' ? '.pdf' : '.epub';
+  const filePath = `${bookId}${ext}`;
+  const { data } = supabase.storage.from(BOOKS_BUCKET).getPublicUrl(filePath);
+  return data.publicUrl;
+}

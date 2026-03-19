@@ -5,7 +5,7 @@ import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, 
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
-import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
+import { fetchBooks, uploadBook, deleteBook, repairBookCover, importOrphanBook } from '../lib/api';
 import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
@@ -668,7 +668,7 @@ function Dashboard({ onBackToLanding }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
               >
-                <SettingsPanel addToast={addToast} />
+                <SettingsPanel addToast={addToast} onBooksChange={loadBooks} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -764,7 +764,55 @@ function Dashboard({ onBackToLanding }) {
   );
 }
 
-function SettingsPanel({ addToast }) {
+function ImportOrphanSection({ addToast, onImported }) {
+  const [bookId, setBookId] = useState('');
+  const [importing, setImporting] = useState(false);
+  const handleImport = async () => {
+    const id = bookId.trim();
+    if (!id) {
+      addToast('Enter the book ID (e.g. from Supabase filename)', 'error');
+      return;
+    }
+    setImporting(true);
+    try {
+      const book = await importOrphanBook(id);
+      addToast(`"${book.title}" added to library`, 'success');
+      setBookId('');
+      onImported?.();
+    } catch (err) {
+      addToast(err?.message || 'Import failed', 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+  return (
+    <div className="dashboard-settings-row" style={{ marginTop: 12 }}>
+      <label>Import orphaned book</label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          type="text"
+          placeholder="72c6a43c-3be2-412e-9a0f-45f96ad35dfb"
+          value={bookId}
+          onChange={(e) => setBookId(e.target.value)}
+          style={{ flex: 1, fontFamily: 'monospace' }}
+        />
+        <button
+          type="button"
+          onClick={handleImport}
+          disabled={importing}
+          className="dashboard-btn"
+        >
+          {importing ? 'Importing...' : 'Import'}
+        </button>
+      </div>
+      <p className="dashboard-settings-hint" style={{ marginTop: 4 }}>
+        If a book was uploaded to Supabase but not added to the library, paste its file ID here (the UUID from the filename, e.g. 72c6a43c-3be2-412e-9a0f-45f96ad35dfb).
+      </p>
+    </div>
+  );
+}
+
+function SettingsPanel({ addToast, onBooksChange }) {
   const [settings, setSettings] = useState(getSettings);
   const [voices, setVoices] = useState([]);
 
@@ -898,6 +946,7 @@ function SettingsPanel({ addToast }) {
       <div className="dashboard-settings-card">
         <h3>Storage</h3>
         <p>Books are stored in Supabase. Connect your project to sync across devices.</p>
+        <ImportOrphanSection addToast={addToast} onImported={onBooksChange} />
       </div>
     </div >
   );
