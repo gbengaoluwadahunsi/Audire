@@ -154,6 +154,9 @@ function Dashboard({ onBackToLanding }) {
 
         const uploaded = await uploadBook(uploadBlob, file.name);
         addToast(`"${uploaded.title}" added to library`, 'success');
+        setSearchQuery('');
+        setActiveTab('library');
+        setBooks((prev) => [uploaded, ...prev.filter((b) => b.id !== uploaded.id)]);
       } catch (err) {
         console.error(`Upload error for ${file.name}:`, err);
         addToast(toUploadErrorMessage(file.name, err), 'error');
