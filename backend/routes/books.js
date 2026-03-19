@@ -116,20 +116,38 @@ async function coverFileExists(book) {
   return files.some((f) => f.startsWith(bookId) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
 }
 
+async function bookFileExists(book) {
+  if (!book?.id || !book.format) return false;
+  if (book.file_url && isSupabaseUrl(book.file_url)) return true;
+  const ext = book.format === 'pdf' ? '.pdf' : '.epub';
+  try {
+    await fs.access(path.join(BOOKS_DIR, `${book.id}${ext}`));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 router.get('/', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const { rows } = await query(
       'SELECT * FROM books ORDER BY added_at DESC'
     );
-    const withValidCovers = await Promise.all(rows.map(async (b) => {
+    const valid = [];
+    for (const b of rows) {
+      if (!(await bookFileExists(b))) {
+        await query('DELETE FROM books WHERE id = $1', [b.id]);
+        continue;
+      }
       if (b.cover && !(await coverFileExists(b))) {
         await query('UPDATE books SET cover = NULL WHERE id = $1', [b.id]);
-        return normalizeBookUrls({ ...b, cover: null }, baseUrl);
+        valid.push(normalizeBookUrls({ ...b, cover: null }, baseUrl));
+      } else {
+        valid.push(normalizeBookUrls(b, baseUrl));
       }
-      return normalizeBookUrls(b, baseUrl);
-    }));
-    res.json(withValidCovers);
+    }
+    res.json(valid);
   } catch (err) {
     console.error('Fetch books error:', err);
     res.status(500).json({ error: err.message });

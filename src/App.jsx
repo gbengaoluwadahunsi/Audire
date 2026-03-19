@@ -20,8 +20,8 @@ function App() {
   useEffect(() => {
     if (!API_BASE) return;
     const healthUrl = `${API_BASE.replace(/\/$/, '')}/api/health`;
-    const ping = () => fetch(healthUrl).catch(() => {});
-    ping(); // initial ping
+    const ping = () => setTimeout(() => fetch(healthUrl).catch(() => {}), 0);
+    ping();
     const id = setInterval(ping, PING_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
