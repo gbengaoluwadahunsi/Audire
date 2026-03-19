@@ -8,6 +8,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
 import { convertEpubToPdf } from '../epubToPdf.js';
+import {
+  isSupabaseEnabled,
+  uploadBookFile,
+  uploadCover,
+  deleteBookFile,
+  deleteCover,
+  isSupabaseUrl,
+} from '../supabaseStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -91,7 +99,10 @@ function enqueueRepairJob(job) {
   return run;
 }
 
-async function coverFileExists(bookId) {
+async function coverFileExists(book) {
+  if (!book) return false;
+  if (book.cover && isSupabaseUrl(book.cover)) return true;
+  const bookId = typeof book === 'string' ? book : book.id;
   const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
   for (const ext of exts) {
     try {
@@ -112,7 +123,7 @@ router.get('/', async (req, res) => {
       'SELECT * FROM books ORDER BY added_at DESC'
     );
     const withValidCovers = await Promise.all(rows.map(async (b) => {
-      if (b.cover && !(await coverFileExists(b.id))) {
+      if (b.cover && !(await coverFileExists(b))) {
         await query('UPDATE books SET cover = NULL WHERE id = $1', [b.id]);
         return normalizeBookUrls({ ...b, cover: null }, baseUrl);
       }
@@ -131,7 +142,7 @@ router.get('/:id', async (req, res) => {
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     let book = rows[0];
-    if (book.cover && !(await coverFileExists(book.id))) {
+    if (book.cover && !(await coverFileExists(book))) {
       await query('UPDATE books SET cover = NULL WHERE id = $1', [book.id]);
       book = { ...book, cover: null };
     }
@@ -158,17 +169,22 @@ router.post('/', upload.single('file'), async (req, res) => {
     // Try to check for duplicates using file_hash (only works if column exists)
     try {
       const { rows: existingBooks } = await query(
-        'SELECT id, added_at FROM books WHERE file_hash = $1 ORDER BY added_at ASC',
+        'SELECT id, added_at, format FROM books WHERE file_hash = $1 ORDER BY added_at ASC',
         [fileHash]
       );
 
       // Delete any older duplicate books with the same file hash
       for (const existingBook of existingBooks) {
         console.log(`Deleting duplicate book ${existingBook.id}, keeping newer upload`);
+        const { rows: dup } = await query('SELECT file_url FROM books WHERE id = $1', [existingBook.id]);
+        if (dup[0]?.file_url && isSupabaseUrl(dup[0].file_url)) {
+          await deleteBookFile(existingBook.id, existingBook.format).catch(() => {});
+          await deleteCover(existingBook.id).catch(() => {});
+        } else {
+          const ext = existingBook.format === 'pdf' ? '.pdf' : '.epub';
+          await fs.unlink(path.join(BOOKS_DIR, `${existingBook.id}${ext}`)).catch(() => {});
+        }
         await query('DELETE FROM books WHERE id = $1', [existingBook.id]);
-        // Also delete the associated book file if it exists
-        const bookFilePath = path.join(BOOKS_DIR, `${existingBook.id}${bookData.format === 'pdf' ? '.pdf' : '.epub'}`);
-        await fs.unlink(bookFilePath).catch(() => {});
       }
     } catch (hashErr) {
       // file_hash column doesn't exist yet - that's OK, duplicate detection will work once schema is updated
@@ -180,10 +196,22 @@ router.post('/', upload.single('file'), async (req, res) => {
       }
     }
 
-    const fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
-    const coverUrl = coverPath
-      ? `${baseUrl}/api/books/${bookData.id}/cover`
-      : null;
+    let fileUrl;
+    let coverUrl = null;
+
+    if (isSupabaseEnabled()) {
+      fileUrl = await uploadBookFile(bookData.id, bookData.format, fileBuffer);
+      if (coverPath) {
+        const coverBuf = await fs.readFile(coverPath);
+        const coverExt = path.extname(coverPath).toLowerCase();
+        coverUrl = await uploadCover(bookData.id, coverBuf, coverExt);
+      }
+      await fs.unlink(req.file.path).catch(() => {});
+      if (coverPath) await fs.unlink(coverPath).catch(() => {});
+    } else {
+      fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
+      coverUrl = coverPath ? `${baseUrl}/api/books/${bookData.id}/cover` : null;
+    }
 
     // Try to INSERT with file_hash first, fall back without if column doesn't exist
     try {
@@ -228,38 +256,61 @@ router.post('/', upload.single('file'), async (req, res) => {
   }
 });
 
-/** Convert EPUB to PDF and serve. Caches result as {id}_converted.pdf */
+/** Convert EPUB to PDF and serve. Caches result as {id}_converted.pdf (local) or temp (Supabase). */
 router.get('/:id/pdf', async (req, res) => {
   try {
-    const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
+    const { rows } = await query('SELECT id, format, file_url FROM books WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).send('Book not found');
     const book = rows[0];
     if (book.format !== 'epub') {
       return res.status(400).json({ error: 'Only EPUB books can be converted to PDF' });
     }
 
-    const epubPath = path.join(BOOKS_DIR, `${book.id}.epub`);
+    let epubPath = path.join(BOOKS_DIR, `${book.id}.epub`);
     const pdfPath = path.join(BOOKS_DIR, `${book.id}_converted.pdf`);
+    let tempEpub = false;
 
-    try {
-      await fs.access(epubPath);
-    } catch {
-      return res.status(404).send('EPUB file not found');
+    if (book.file_url && isSupabaseUrl(book.file_url)) {
+      const resp = await fetch(book.file_url);
+      if (!resp.ok) return res.status(404).send('EPUB file not found');
+      const buf = Buffer.from(await resp.arrayBuffer());
+      epubPath = path.join(BOOKS_DIR, `temp_${book.id}.epub`);
+      await fs.writeFile(epubPath, buf);
+      tempEpub = true;
+    } else {
+      try {
+        await fs.access(epubPath);
+      } catch {
+        return res.status(404).send('EPUB file not found');
+      }
+    }
+
+    let outPath = pdfPath;
+    if (tempEpub) {
+      outPath = path.join(BOOKS_DIR, `temp_${book.id}_converted.pdf`);
+    } else {
+      try {
+        await fs.access(pdfPath);
+        outPath = pdfPath;
+      } catch {
+        // need to convert
+      }
     }
 
     try {
-      await fs.access(pdfPath);
+      await fs.access(outPath);
     } catch {
       try {
-        await convertEpubToPdf(epubPath, pdfPath);
+        await convertEpubToPdf(epubPath, outPath);
       } catch (err) {
+        if (tempEpub) await fs.unlink(epubPath).catch(() => {});
         console.error('EPUB to PDF conversion error:', err);
         return res.status(500).json({ error: err.message || 'Conversion failed' });
       }
     }
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.sendFile(path.resolve(pdfPath));
+    res.sendFile(path.resolve(outPath));
   } catch (err) {
     console.error('Get PDF error:', err);
     res.status(500).send('Error');
@@ -325,7 +376,7 @@ router.post('/:id/repair-cover', async (req, res) => {
 
   try {
     await enqueueRepairJob(async () => {
-      const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
+      const { rows } = await query('SELECT id, format, file_url FROM books WHERE id = $1', [req.params.id]);
       if (!rows.length) {
         res.status(404).json({ error: 'Book not found' });
         return;
@@ -333,22 +384,43 @@ router.post('/:id/repair-cover', async (req, res) => {
 
       const book = rows[0];
       const ext = book.format === 'pdf' ? '.pdf' : '.epub';
-      const filePath = path.join(BOOKS_DIR, `${book.id}${ext}`);
-      try {
-        await fs.access(filePath);
-      } catch {
-        res.status(404).json({ error: 'File not found' });
-        return;
+      let filePath = path.join(BOOKS_DIR, `${book.id}${ext}`);
+
+      if (book.file_url && isSupabaseUrl(book.file_url)) {
+        const resp = await fetch(book.file_url);
+        if (!resp.ok) {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        filePath = path.join(BOOKS_DIR, `temp_${book.id}${ext}`);
+        await fs.writeFile(filePath, buf);
+      } else {
+        try {
+          await fs.access(filePath);
+        } catch {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
       }
 
       const { extractCover } = await import('../fileProcessor.js');
       const coverPath = await extractCover(filePath, book.id, book.format, COVERS_DIR);
 
-      // If cover could be extracted, update the database.
+      if (filePath.includes('temp_')) await fs.unlink(filePath).catch(() => {});
+
       if (coverPath) {
-        const baseUrl = getBaseUrl(req);
-        const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
-        await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
+        if (isSupabaseEnabled()) {
+          const coverBuf = await fs.readFile(coverPath);
+          const coverExt = path.extname(coverPath).toLowerCase();
+          const coverUrl = await uploadCover(book.id, coverBuf, coverExt);
+          await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
+          await fs.unlink(coverPath).catch(() => {});
+        } else {
+          const baseUrl = getBaseUrl(req);
+          const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
+          await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
+        }
       }
 
       const { rows: updated } = await query('SELECT * FROM books WHERE id = $1', [book.id]);
@@ -379,16 +451,20 @@ router.patch('/:id/progress', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const { rows } = await query('SELECT format FROM books WHERE id = $1', [req.params.id]);
+    const { rows } = await query('SELECT format, file_url FROM books WHERE id = $1', [req.params.id]);
     if (rows.length) {
-      const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
-      const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
-      await fs.unlink(filePath).catch(() => {});
-      if (rows[0].format === 'epub') {
-        await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}_converted.pdf`)).catch(() => {});
-      }
-      for (const e of ['.jpg', '.jpeg', '.png', '.gif', '.webp']) {
-        await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => {});
+      if (rows[0].file_url && isSupabaseUrl(rows[0].file_url)) {
+        await deleteBookFile(req.params.id, rows[0].format).catch(() => {});
+        await deleteCover(req.params.id).catch(() => {});
+      } else {
+        const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
+        await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}${ext}`)).catch(() => {});
+        if (rows[0].format === 'epub') {
+          await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}_converted.pdf`)).catch(() => {});
+        }
+        for (const e of ['.jpg', '.jpeg', '.png', '.gif', '.webp']) {
+          await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => {});
+        }
       }
     }
     await query('DELETE FROM books WHERE id = $1', [req.params.id]);
