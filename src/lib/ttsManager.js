@@ -382,27 +382,9 @@ class TTSManager {
 
     window.speechSynthesis.cancel();
 
-    return new Promise((resolve) => {
-      let totalQueued = 0;
+    // Queue one chunk at a time so stop() + cancel() reliably halts playback (no huge backlog).
+    return (async () => {
       let completed = 0;
-
-      const keepAlive = setInterval(() => {
-        if (this._stopped || (sessionId && this.currentSessionId !== sessionId) || completed >= totalQueued) {
-          clearInterval(keepAlive);
-          return;
-        }
-        if (window.speechSynthesis.speaking && !this.isPaused) {
-          window.speechSynthesis.pause();
-          window.speechSynthesis.resume();
-        }
-      }, 10000);
-
-      const finish = () => {
-        clearInterval(keepAlive);
-        this.currentUtterance = null;
-        resolve();
-      };
-
       for (let i = 0; i < textChunks.length; i++) {
         if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) break;
 
@@ -410,25 +392,28 @@ class TTSManager {
         if (!chunk) continue;
         if (chunk.length > 2000) chunk = chunk.substring(0, 2000);
 
-        const u = this._createUtterance(chunk);
-        totalQueued++;
-
-        u.onend = () => {
-          completed++;
-          onChunkComplete?.(completed, textChunks.length);
-          if (completed >= totalQueued) finish();
-        };
-        u.onerror = () => {
-          completed++;
-          if (completed >= totalQueued) finish();
-        };
-
-        window.speechSynthesis.speak(u);
-        this.currentUtterance = u;
+        await new Promise((resolve) => {
+          if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) {
+            resolve();
+            return;
+          }
+          const u = this._createUtterance(chunk);
+          this.currentUtterance = u;
+          u.onend = () => {
+            completed++;
+            onChunkComplete?.(completed, textChunks.length);
+            this.currentUtterance = null;
+            resolve();
+          };
+          u.onerror = () => {
+            this.currentUtterance = null;
+            resolve();
+          };
+          window.speechSynthesis.speak(u);
+        });
       }
-
-      if (totalQueued === 0) finish();
-    });
+      this.currentUtterance = null;
+    })();
   }
 
   startSession() {
@@ -455,6 +440,8 @@ class TTSManager {
   stop() {
     this._stopped = true;
     this.isPaused = false;
+    // Invalidate session so in-flight speakContinuous loops exit immediately
+    this.currentSessionId = null;
     // Stop any currently-playing Web Audio source
     try { this._currentSource?.stop(0); } catch {
       // Source may already be stopped/disposed.
@@ -465,7 +452,22 @@ class TTSManager {
       this._currentAudio.src = '';
       this._currentAudio = null;
     }
-    window.speechSynthesis?.cancel?.();
+    const syn = window.speechSynthesis;
+    if (syn) {
+      syn.cancel();
+      // Second tick + empty utterance helps Chrome flush stuck queues after cancel()
+      setTimeout(() => {
+        try {
+          syn.cancel();
+          const flush = new SpeechSynthesisUtterance('');
+          flush.volume = 0;
+          syn.speak(flush);
+          syn.cancel();
+        } catch {
+          /* ignore */
+        }
+      }, 0);
+    }
     this.currentUtterance = null;
     this._cleanupCache();
   }

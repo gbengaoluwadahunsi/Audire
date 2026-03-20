@@ -78,6 +78,13 @@ function Reader({ bookData, onBack, addToast }) {
   const selectedCfiRangeRef = useRef(null);
   const epubResizeObserverRef = useRef(null);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
+  /** Latest progress for flush on tab close / reader exit */
+  const lastProgressRef = useRef({ bookId: null, cfi: null, progressPercent: null, totalPages: null });
+
+  const persistBookProgress = (bookId, cfi, progressPercent, totalPages) => {
+    lastProgressRef.current = { bookId, cfi, progressPercent, totalPages };
+    return updateBookProgress(bookId, cfi, progressPercent, totalPages).catch(() => {});
+  };
 
   const settings = getSettings();
   const readerFontSize = settings.fontSize ?? 16;
@@ -127,15 +134,46 @@ function Reader({ bookData, onBack, addToast }) {
   }, [bookData?.format, pdfText, isPlayingTTS]);
 
   useEffect(() => {
-    if (bookData?.id) {
-      setBookmarks(getBookmarks(bookData.id));
-      setHighlights(getHighlights(bookData.id));
-    }
+    if (!bookData?.id) return;
+    let cancelled = false;
+    void (async () => {
+      const [bm, hl] = await Promise.all([getBookmarks(bookData.id), getHighlights(bookData.id)]);
+      if (!cancelled) {
+        setBookmarks(bm);
+        setHighlights(hl);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [bookData?.id]);
 
   useEffect(() => {
     currentPageRef.current = currentPage;
   }, [currentPage]);
+
+  useEffect(() => {
+    const flush = () => {
+      const p = lastProgressRef.current;
+      if (!p.bookId) return;
+      updateBookProgress(p.bookId, p.cfi, p.progressPercent, p.totalPages).catch(() => {});
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    const onGlobalStop = () => {
+      playbackSessionRef.current = 0;
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('audire-tts-global-stop', onGlobalStop);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('audire-tts-global-stop', onGlobalStop);
+      flush();
+    };
+  }, []);
 
   useEffect(() => {
     const s = getSettings();
@@ -242,19 +280,21 @@ function Reader({ bookData, onBack, addToast }) {
             };
             doc.addEventListener('selectionchange', notifySelection);
 
-            const bookHighlights = getHighlights(bookData.id);
-            bookHighlights.forEach((h) => {
-              try {
-                const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
-                rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
-                  fill: colorInfo.color,
-                  'fill-opacity': '0.4',
-                  'mix-blend-mode': 'multiply',
-                });
-              } catch {
-                // CFI may be in different section.
-              }
-            });
+            void (async () => {
+              const bookHighlights = await getHighlights(bookData.id);
+              bookHighlights.forEach((h) => {
+                try {
+                  const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
+                  rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
+                    fill: colorInfo.color,
+                    'fill-opacity': '0.4',
+                    'mix-blend-mode': 'multiply',
+                  });
+                } catch {
+                  // CFI may be in different section.
+                }
+              });
+            })();
 
             const style = doc.createElement('style');
             if (settings.theme === 'dark') {
@@ -317,7 +357,7 @@ function Reader({ bookData, onBack, addToast }) {
             const pct = book.locations?.percentageFromCfi?.(location.start.cfi) ?? 0;
             const percent = pct * 100;
             setProgress(percent);
-            updateBookProgress(bookData.id, location.start.cfi, percent).catch(() => {});
+            persistBookProgress(bookData.id, location.start.cfi, percent);
             setPlaybackProgress(percent);
           });
         } catch (err) {
@@ -416,7 +456,7 @@ function Reader({ bookData, onBack, addToast }) {
     }
     const pct = (contentPageNum / contentTotal) * 100;
     setProgress(pct);
-    updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
+    persistBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages);
     if (pdfCanvasRef.current) await renderPdfPage(phys);
   };
 
@@ -710,7 +750,7 @@ function Reader({ bookData, onBack, addToast }) {
             const ct = Math.max(1, pdfRef.current.numPages - pdfPageOffset);
             const pct = (playbackPdfPage / ct) * 100;
             setProgress(pct);
-            updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
+            persistBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages);
           }
           if (!chunks?.length) {
             if (skipped >= MAX_SKIP_PAGES) {
@@ -941,29 +981,29 @@ function Reader({ bookData, onBack, addToast }) {
     };
   }, [bookData?.id, totalPages, currentPage, pdfPageOffset, isPlayingTTS]);
 
-  const handleAddBookmark = () => {
+  const handleAddBookmark = async () => {
     if (bookData.format === 'epub') {
       const loc = renditionRef.current?.currentLocation();
       if (loc) {
         const doc = bookRef.current?.spine?.get(loc.start.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 100) || '';
-        addBookmark(bookData.id, { cfi: loc.start.cfi, text });
-        setBookmarks(getBookmarks(bookData.id));
+        await addBookmark(bookData.id, { cfi: loc.start.cfi, text });
+        setBookmarks(await getBookmarks(bookData.id));
       }
     } else {
-      addBookmark(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: pdfText?.slice(0, 100) || '' });
-      setBookmarks(getBookmarks(bookData.id));
+      await addBookmark(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: pdfText?.slice(0, 100) || '' });
+      setBookmarks(await getBookmarks(bookData.id));
     }
   };
 
-  const handleAddHighlight = () => {
+  const handleAddHighlight = async () => {
     if (bookData.format === 'epub') {
       const cfiRange = selectedCfiRangeRef.current;
       const loc = renditionRef.current?.currentLocation?.();
       const cfi = cfiRange || loc?.start?.cfi;
       if (cfi && selectedText) {
-        addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
           renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
@@ -977,8 +1017,8 @@ function Reader({ bookData, onBack, addToast }) {
       } else if (cfi) {
         const doc = bookRef.current?.spine?.get(loc?.start?.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 200) || selectedText || '';
-        addHighlight(bookData.id, { cfi, text, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi, text, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
           renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
@@ -994,8 +1034,8 @@ function Reader({ bookData, onBack, addToast }) {
       }
     } else {
       if (selectedText) {
-        addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
       } else {
         addToast?.('Select text in the PDF first. If selection doesn\'t work, try a different PDF or use EPUB for full highlighting.', 'info');
       }
@@ -1247,9 +1287,9 @@ function Reader({ bookData, onBack, addToast }) {
                   <button onClick={() => handleGotoBookmark(bm)}>{bm.text || 'Bookmark'}</button>
                   <button
                     className="remove"
-                    onClick={() => {
-                      removeBookmark(bookData.id, bm.id);
-                      setBookmarks(getBookmarks(bookData.id));
+                    onClick={async () => {
+                      await removeBookmark(bookData.id, bm.id);
+                      setBookmarks(await getBookmarks(bookData.id));
                     }}
                   >
                     <X size={14} />
@@ -1301,7 +1341,7 @@ function Reader({ bookData, onBack, addToast }) {
                     </button>
                     <button
                       className="remove"
-                      onClick={() => {
+                      onClick={async () => {
                         if (bookData.format === 'epub') {
                           try {
                             renditionRef.current?.annotations?.remove?.(h.cfi, 'highlight');
@@ -1309,8 +1349,8 @@ function Reader({ bookData, onBack, addToast }) {
                             // Ignore scroll-sync edge cases during selection.
                           }
                         }
-                        removeHighlight(bookData.id, h.id);
-                        setHighlights(getHighlights(bookData.id));
+                        await removeHighlight(bookData.id, h.id);
+                        setHighlights(await getHighlights(bookData.id));
                       }}
                       title="Delete highlight"
                     >

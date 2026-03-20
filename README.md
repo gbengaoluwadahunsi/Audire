@@ -50,7 +50,7 @@ cd backend && npm install && cd ..
 ### 2. Set up the database
 
 1. Create a free project at [neon.tech](https://neon.tech)
-2. Run the schema from `backend/neon-schema.sql` in the SQL Editor
+2. Run the schema from `backend/neon-schema.sql` in the SQL Editor (includes bookmarks, highlights, and collections tables for cross-device sync)
 
 ### 3. Configure environment
 
