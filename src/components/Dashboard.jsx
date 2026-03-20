@@ -153,6 +153,9 @@ function Dashboard({ onBackToLanding }) {
         }
 
         const uploaded = await uploadBook(uploadBlob, file.name);
+        // #region agent log
+        fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c7180c'},body:JSON.stringify({sessionId:'c7180c',location:'Dashboard.jsx:handleFileUpload',message:'Upload done, about to loadBooks',data:{uploadedId:uploaded?.id,uploadedTitle:uploaded?.title},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
         addToast(`"${uploaded.title}" added to library`, 'success');
         setSearchQuery('');
         setActiveTab('library');
@@ -163,7 +166,8 @@ function Dashboard({ onBackToLanding }) {
       }
     }
 
-    await loadBooks();
+    // Don't refetch after upload - setBooks already added the book; loadBooks would overwrite
+    // and can drop the new book if GET /api/books filters it out (e.g. bookFileExists check).
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
