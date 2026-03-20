@@ -6,7 +6,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, deleteBook, repairBookCover, importOrphanBook } from '../lib/api';
-import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
+import { getCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
+import { migrateLegacyLibraryDataIfNeeded } from '../lib/librarySyncMigration';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
@@ -98,9 +99,22 @@ function Dashboard({ onBackToLanding }) {
   };
 
   useEffect(() => {
-    loadBooks();
-    setCollections(getCollections());
+    void (async () => {
+      await loadBooks();
+      await migrateLegacyLibraryDataIfNeeded();
+      setCollections(await getCollections());
+    })();
   }, []);
+
+  useEffect(() => {
+    if (selectedBook?.id) {
+      try {
+        localStorage.setItem('audire-last-open-book', selectedBook.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [selectedBook?.id]);
 
   const loadBooks = async () => {
     setIsLoading(true);
@@ -153,9 +167,6 @@ function Dashboard({ onBackToLanding }) {
         }
 
         const uploaded = await uploadBook(uploadBlob, file.name);
-        // #region agent log
-        fetch('http://127.0.0.1:7439/ingest/28aa012c-c32b-4c2a-a3b2-51018433fbe2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c7180c'},body:JSON.stringify({sessionId:'c7180c',location:'Dashboard.jsx:handleFileUpload',message:'Upload done, about to loadBooks',data:{uploadedId:uploaded?.id,uploadedTitle:uploaded?.title},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-        // #endregion
         addToast(`"${uploaded.title}" added to library`, 'success');
         setSearchQuery('');
         setActiveTab('library');
@@ -175,12 +186,6 @@ function Dashboard({ onBackToLanding }) {
   const handleDelete = async (book) => {
     try {
       await deleteBook(book.id);
-      const nextCollections = getCollections().map((c) => ({
-        ...c,
-        bookIds: c.bookIds.filter((id) => id !== book.id),
-      }));
-      saveCollections(nextCollections);
-      setCollections(nextCollections);
       setSelectedCollection((prev) => {
         if (!prev) return prev;
         return {
@@ -190,6 +195,7 @@ function Dashboard({ onBackToLanding }) {
       });
       addToast(`"${book.title}" removed`, 'success');
       await loadBooks();
+      setCollections(await getCollections());
       setShowDeleteConfirm(null);
     } catch {
       addToast('Could not delete book', 'error');
@@ -208,6 +214,13 @@ function Dashboard({ onBackToLanding }) {
 
   const collectedBookIds = new Set(collections.flatMap(c => c.bookIds));
 
+  let lastOpenedId = null;
+  try {
+    lastOpenedId = localStorage.getItem('audire-last-open-book');
+  } catch {
+    lastOpenedId = null;
+  }
+
   const filteredBooks = books
     .filter(
       (b) => {
@@ -223,6 +236,14 @@ function Dashboard({ onBackToLanding }) {
       const sortBy = librarySort;
       const order = librarySortOrder;
       const mult = order === 'asc' ? 1 : -1;
+
+      // Pin last-opened book to top when sorting by "Last read" (desc)
+      if (sortBy === 'last_read' && order === 'desc' && lastOpenedId) {
+        const aPin = a.id === lastOpenedId;
+        const bPin = b.id === lastOpenedId;
+        if (aPin && !bPin) return -1;
+        if (!aPin && bPin) return 1;
+      }
 
       let cmp = 0;
       if (sortBy === 'title') {
@@ -491,10 +512,11 @@ function Dashboard({ onBackToLanding }) {
                       </div>
                       <button
                         className="danger-outline-btn"
-                        onClick={() => {
+                        onClick={async () => {
                           if (confirm(`Delete collection "${selectedCollection.name}"? Books will return to library.`)) {
-                            setCollections(removeCollection(selectedCollection.id));
+                            await removeCollection(selectedCollection.id);
                             setSelectedCollection(null);
+                            setCollections(await getCollections());
                           }
                         }}
                       >
@@ -536,15 +558,17 @@ function Dashboard({ onBackToLanding }) {
                               <button
                                 type="button"
                                 className="collection-book-action"
-                                onClick={() => {
+                                onClick={async () => {
                                   const ok = confirm(`Remove "${book.title}" from "${selectedCollection.name}"?`);
                                   if (!ok) return;
-                                  removeBookFromCollection(selectedCollection.id, book.id);
-                                  setCollections(getCollections());
-                                  setSelectedCollection(prev => ({
-                                    ...prev,
-                                    bookIds: prev.bookIds.filter(id => id !== book.id)
-                                  }));
+                                  await removeBookFromCollection(selectedCollection.id, book.id);
+                                  const next = await getCollections();
+                                  setCollections(next);
+                                  setSelectedCollection(prev => {
+                                    if (!prev) return prev;
+                                    const col = next.find((x) => x.id === prev.id);
+                                    return col ? { ...col, bookIds: col.bookIds } : { ...prev, bookIds: prev.bookIds.filter((id) => id !== book.id) };
+                                  });
                                 }}
                                 title="Remove from this collection"
                               >
@@ -569,11 +593,11 @@ function Dashboard({ onBackToLanding }) {
                     <p>No collections yet. Add books to collections from the library.</p>
                     <button
                       className="dashboard-empty-btn"
-                      onClick={() => {
+                      onClick={async () => {
                         const name = prompt('Collection name');
                         if (name) {
-                          addCollection(name);
-                          setCollections(getCollections());
+                          await addCollection(name);
+                          setCollections(await getCollections());
                         }
                       }}
                     >
@@ -600,11 +624,12 @@ function Dashboard({ onBackToLanding }) {
                             type="button"
                             className="dashboard-collection-delete"
                             title="Delete collection"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
                               if (confirm(`Delete collection "${c.name}"? Books will stay in your library.`)) {
-                                setCollections(removeCollection(c.id));
+                                await removeCollection(c.id);
                                 if (selectedCollection?.id === c.id) setSelectedCollection(null);
+                                setCollections(await getCollections());
                               }
                             }}
                           >
@@ -645,10 +670,10 @@ function Dashboard({ onBackToLanding }) {
                                     type="button"
                                     className="dashboard-collection-book-remove"
                                     title="Remove from collection"
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                       e.stopPropagation();
-                                      removeBookFromCollection(c.id, b.id);
-                                      setCollections(getCollections());
+                                      await removeBookFromCollection(c.id, b.id);
+                                      setCollections(await getCollections());
                                     }}
                                   >
                                     <X size={12} />
@@ -734,10 +759,10 @@ function Dashboard({ onBackToLanding }) {
                     <button
                       key={c.id}
                       type="button"
-                      onClick={() => {
-                        if (inCol) removeBookFromCollection(c.id, book.id);
-                        else addBookToCollection(c.id, book.id);
-                        setCollections(getCollections());
+                      onClick={async () => {
+                        if (inCol) await removeBookFromCollection(c.id, book.id);
+                        else await addBookToCollection(c.id, book.id);
+                        setCollections(await getCollections());
                         setShowCollectionMenu(null);
                       }}
                     >
@@ -748,11 +773,11 @@ function Dashboard({ onBackToLanding }) {
                 <button
                   type="button"
                   className="collection-modal-new"
-                  onClick={() => {
+                  onClick={async () => {
                     const name = prompt('Collection name');
                     if (name) {
-                      addCollection(name);
-                      setCollections(getCollections());
+                      await addCollection(name);
+                      setCollections(await getCollections());
                     }
                   }}
                 >

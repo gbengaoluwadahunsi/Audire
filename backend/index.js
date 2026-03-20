@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import booksRouter from './routes/books.js';
 import aiRouter from './routes/ai.js';
 import ttsRouter from './routes/tts.js';
+import librarySyncRouter from './routes/librarySync.js';
 import { isSupabaseEnabled } from './supabaseStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/books', booksRouter);
+app.use('/api/library-sync', librarySyncRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/tts', ttsRouter);
 

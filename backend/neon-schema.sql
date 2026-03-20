@@ -19,3 +19,38 @@ CREATE TABLE IF NOT EXISTS books (
 
 CREATE INDEX IF NOT EXISTS idx_books_added_at ON books(added_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
+
+-- Bookmarks, highlights, collections (synced via /api/library-sync)
+CREATE TABLE IF NOT EXISTS user_bookmarks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  book_id uuid NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  cfi text NOT NULL,
+  snippet text,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_bookmarks_book ON user_bookmarks(book_id);
+
+CREATE TABLE IF NOT EXISTS user_highlights (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  book_id uuid NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  cfi text NOT NULL,
+  body text,
+  color text DEFAULT 'yellow',
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_highlights_book ON user_highlights(book_id);
+
+CREATE TABLE IF NOT EXISTS user_collections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  sort_order int DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_collection_books (
+  collection_id uuid NOT NULL REFERENCES user_collections(id) ON DELETE CASCADE,
+  book_id uuid NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  position int NOT NULL DEFAULT 0,
+  PRIMARY KEY (collection_id, book_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_collection_books_order ON user_collection_books(collection_id, position);

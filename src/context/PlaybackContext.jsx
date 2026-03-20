@@ -38,6 +38,11 @@ export function PlaybackProvider({ children }) {
 
   const stop = useCallback(() => {
     ttsManager.stop();
+    try {
+      window.dispatchEvent(new CustomEvent('audire-tts-global-stop'));
+    } catch {
+      /* ignore */
+    }
     setIsPlaying(false);
     setCurrentBook(null);
     setProgress(0);

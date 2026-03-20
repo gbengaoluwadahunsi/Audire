@@ -1,3 +1,14 @@
+import {
+  isLibrarySyncConfigured,
+  librarySyncFetchBookmarks,
+  librarySyncCreateBookmark,
+  librarySyncDeleteBookmark,
+  librarySyncFetchHighlights,
+  librarySyncCreateHighlight,
+  librarySyncUpdateHighlightColor,
+  librarySyncDeleteHighlight,
+} from './api.js';
+
 const STORAGE_KEY = 'audire-bookmarks';
 const HIGHLIGHTS_KEY = 'audire-highlights';
 
@@ -9,7 +20,7 @@ export const HIGHLIGHT_COLORS = [
   { id: 'purple', label: 'Purple', color: '#c4b5fd' },
 ];
 
-export function getBookmarks(bookId) {
+function getBookmarksLocal(bookId) {
   try {
     const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     return all[bookId] || [];
@@ -18,24 +29,7 @@ export function getBookmarks(bookId) {
   }
 }
 
-export function addBookmark(bookId, { cfi, text }) {
-  const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  const list = all[bookId] || [];
-  list.push({ id: Date.now(), cfi, text: (text || '').slice(0, 100), createdAt: new Date().toISOString() });
-  all[bookId] = list;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-  return list;
-}
-
-export function removeBookmark(bookId, bookmarkId) {
-  const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  const list = (all[bookId] || []).filter(b => b.id !== bookmarkId);
-  all[bookId] = list;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-  return list;
-}
-
-export function getHighlights(bookId) {
+function getHighlightsLocal(bookId) {
   try {
     const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
     return all[bookId] || [];
@@ -44,27 +38,104 @@ export function getHighlights(bookId) {
   }
 }
 
-export function addHighlight(bookId, { cfi, text, color = 'yellow' }) {
-  const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
-  const list = all[bookId] || [];
-  list.push({ id: Date.now(), cfi, text: (text || '').slice(0, 200), color, createdAt: new Date().toISOString() });
-  all[bookId] = list;
-  localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
-  return list;
+/** Normalize server row to same shape as legacy local items */
+function normalizeBookmark(b) {
+  return {
+    id: b.id,
+    cfi: b.cfi,
+    text: b.text ?? '',
+    createdAt: b.createdAt,
+  };
 }
 
-export function removeHighlight(bookId, highlightId) {
-  const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
-  const list = (all[bookId] || []).filter(h => h.id !== highlightId);
-  all[bookId] = list;
-  localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
-  return list;
+function normalizeHighlight(h) {
+  return {
+    id: h.id,
+    cfi: h.cfi,
+    text: h.text ?? '',
+    color: h.color || 'yellow',
+    createdAt: h.createdAt,
+  };
 }
 
-export function updateHighlightColor(bookId, highlightId, color) {
-  const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
-  const list = (all[bookId] || []).map(h => (h.id === highlightId ? { ...h, color } : h));
-  all[bookId] = list;
-  localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
-  return list;
+export async function getBookmarks(bookId) {
+  if (!isLibrarySyncConfigured()) return getBookmarksLocal(bookId);
+  try {
+    const rows = await librarySyncFetchBookmarks(bookId);
+    return Array.isArray(rows) ? rows.map(normalizeBookmark) : [];
+  } catch {
+    return getBookmarksLocal(bookId);
+  }
+}
+
+export async function addBookmark(bookId, { cfi, text }) {
+  if (!isLibrarySyncConfigured()) {
+    const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const list = all[bookId] || [];
+    list.push({ id: Date.now(), cfi, text: (text || '').slice(0, 100), createdAt: new Date().toISOString() });
+    all[bookId] = list;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    return list;
+  }
+  const created = await librarySyncCreateBookmark(bookId, { cfi, text: (text || '').slice(0, 500) });
+  return getBookmarks(bookId);
+}
+
+export async function removeBookmark(bookId, bookmarkId) {
+  if (!isLibrarySyncConfigured()) {
+    const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const list = (all[bookId] || []).filter((b) => b.id !== bookmarkId);
+    all[bookId] = list;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    return list;
+  }
+  await librarySyncDeleteBookmark(bookmarkId);
+  return getBookmarks(bookId);
+}
+
+export async function getHighlights(bookId) {
+  if (!isLibrarySyncConfigured()) return getHighlightsLocal(bookId);
+  try {
+    const rows = await librarySyncFetchHighlights(bookId);
+    return Array.isArray(rows) ? rows.map(normalizeHighlight) : [];
+  } catch {
+    return getHighlightsLocal(bookId);
+  }
+}
+
+export async function addHighlight(bookId, { cfi, text, color = 'yellow' }) {
+  if (!isLibrarySyncConfigured()) {
+    const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
+    const list = all[bookId] || [];
+    list.push({ id: Date.now(), cfi, text: (text || '').slice(0, 200), color, createdAt: new Date().toISOString() });
+    all[bookId] = list;
+    localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
+    return list;
+  }
+  await librarySyncCreateHighlight(bookId, { cfi, text: (text || '').slice(0, 2000), color });
+  return getHighlights(bookId);
+}
+
+export async function removeHighlight(bookId, highlightId) {
+  if (!isLibrarySyncConfigured()) {
+    const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
+    const list = (all[bookId] || []).filter((h) => h.id !== highlightId);
+    all[bookId] = list;
+    localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
+    return list;
+  }
+  await librarySyncDeleteHighlight(highlightId);
+  return getHighlights(bookId);
+}
+
+export async function updateHighlightColor(bookId, highlightId, color) {
+  if (!isLibrarySyncConfigured()) {
+    const all = JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY) || '{}');
+    const list = (all[bookId] || []).map((h) => (h.id === highlightId ? { ...h, color } : h));
+    all[bookId] = list;
+    localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
+    return list;
+  }
+  await librarySyncUpdateHighlightColor(highlightId, color);
+  return getHighlights(bookId);
 }

@@ -18,6 +18,8 @@ Audire now uses:
 1. In Neon Dashboard → SQL Editor
 2. Paste and run the contents of `backend/neon-schema.sql`
 
+**Already have a Neon DB from an older deploy?** Re-run `backend/neon-schema.sql` — `CREATE TABLE IF NOT EXISTS` will add `user_bookmarks`, `user_highlights`, `user_collections`, and `user_collection_books` without touching existing `books` data.
+
 ## 3. Deploy Backend to Render
 
 1. Push this repo to GitHub
