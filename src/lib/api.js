@@ -116,6 +116,21 @@ export async function deleteBook(bookId) {
   return fetchJson(`/api/books/${bookId}`, { method: 'DELETE' });
 }
 
+/** Update display title and/or author (does not change the file). */
+export async function updateBookMetadata(bookId, { title, author } = {}) {
+  const body = {};
+  if (title !== undefined) body.title = title;
+  if (author !== undefined) body.author = author;
+  if (Object.keys(body).length === 0) {
+    throw new Error('Nothing to update');
+  }
+  const book = await fetchJson(`/api/books/${encodeURIComponent(bookId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  return normalizeBookUrls(book);
+}
+
 export async function repairBookCover(book) {
   if (!book?.id || book.cover || !book.file_url) return null;
   try {

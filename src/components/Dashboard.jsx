@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, Pencil } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
-import { fetchBooks, uploadBook, deleteBook, repairBookCover, importOrphanBook } from '../lib/api';
+import { fetchBooks, uploadBook, deleteBook, repairBookCover, importOrphanBook, updateBookMetadata } from '../lib/api';
 import { getCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { migrateLegacyLibraryDataIfNeeded } from '../lib/librarySyncMigration';
 import { getSettings, saveSettings } from '../lib/settings';
@@ -66,6 +66,9 @@ function Dashboard({ onBackToLanding }) {
   const [toasts, setToasts] = useState([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [showCollectionMenu, setShowCollectionMenu] = useState(null);
+  const [renameBookId, setRenameBookId] = useState(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renameAuthor, setRenameAuthor] = useState('');
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [librarySort, setLibrarySort] = useState(() => getSettings().librarySort || 'last_read');
   const [librarySortOrder, setLibrarySortOrder] = useState(() => getSettings().librarySortOrder || 'desc');
@@ -208,6 +211,37 @@ function Dashboard({ onBackToLanding }) {
     // and can drop the new book if GET /api/books filters it out (e.g. bookFileExists check).
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const openRenameModal = (book, e) => {
+    e?.stopPropagation();
+    setRenameTitle(book.title || '');
+    setRenameAuthor(book.author || '');
+    setRenameBookId(book.id);
+    setShowDeleteConfirm(null);
+    setShowCollectionMenu(null);
+  };
+
+  const handleSaveRename = async () => {
+    const book = books.find((b) => b.id === renameBookId);
+    if (!book) return;
+    const t = renameTitle.trim();
+    if (!t) {
+      addToast('Title is required', 'error');
+      return;
+    }
+    try {
+      const updated = await updateBookMetadata(book.id, {
+        title: t,
+        author: renameAuthor.trim() === '' ? null : renameAuthor.trim(),
+      });
+      setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, ...updated } : b)));
+      setSelectedBook((prev) => (prev?.id === book.id ? { ...prev, ...updated } : prev));
+      setRenameBookId(null);
+      addToast('Book details updated', 'success');
+    } catch (err) {
+      addToast(err?.message || 'Could not update book', 'error');
+    }
   };
 
   const handleDelete = async (book) => {
@@ -498,6 +532,14 @@ function Dashboard({ onBackToLanding }) {
                           )}
                           <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
                           <button
+                            type="button"
+                            className="dashboard-book-rename"
+                            onClick={(e) => openRenameModal(book, e)}
+                            title="Edit title"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
                             className="dashboard-book-delete"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -618,6 +660,13 @@ function Dashboard({ onBackToLanding }) {
                               <p>{book.author || 'Unknown'}</p>
                             </div>
                             <div className="collection-book-actions" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="collection-book-action"
+                                onClick={(e) => openRenameModal(book, e)}
+                              >
+                                Rename
+                              </button>
                               <button
                                 type="button"
                                 className="collection-book-action"
@@ -846,6 +895,54 @@ function Dashboard({ onBackToLanding }) {
                 >
                   + New collection
                 </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+
+      {renameBookId && (() => {
+        const book = books.find((b) => b.id === renameBookId);
+        if (!book) return null;
+        return createPortal(
+          <div
+            className="delete-modal-overlay"
+            onClick={() => setRenameBookId(null)}
+            role="presentation"
+          >
+            <div
+              className="rename-modal"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rename-modal-title"
+            >
+              <h2 id="rename-modal-title" className="rename-modal-heading">Edit book</h2>
+              <div className="rename-modal-field">
+                <label htmlFor="rename-book-title">Title</label>
+                <input
+                  id="rename-book-title"
+                  type="text"
+                  value={renameTitle}
+                  onChange={(e) => setRenameTitle(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="rename-modal-field">
+                <label htmlFor="rename-book-author">Author</label>
+                <input
+                  id="rename-book-author"
+                  type="text"
+                  value={renameAuthor}
+                  onChange={(e) => setRenameAuthor(e.target.value)}
+                  placeholder="Optional"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="delete-modal-actions">
+                <button type="button" onClick={() => setRenameBookId(null)}>Cancel</button>
+                <button type="button" onClick={() => void handleSaveRename()}>Save</button>
               </div>
             </div>
           </div>,
