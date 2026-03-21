@@ -242,15 +242,15 @@ router.post('/import-orphan', async (req, res) => {
 
     try {
       await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at, last_read)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
         [bookData.id, bookData.title, bookData.author || null, coverUrl, fileUrl, format, fileHash]
       );
     } catch (insertErr) {
       if (insertErr.code === '42703') {
         await query(
-          `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
-           VALUES ($1, $2, $3, $4, $5, $6, now())`,
+          `INSERT INTO books (id, title, author, cover, file_url, format, added_at, last_read)
+           VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
           [bookData.id, bookData.title, bookData.author || null, coverUrl, fileUrl, format]
         );
       } else {
@@ -333,8 +333,8 @@ router.post('/', upload.single('file'), async (req, res) => {
     // Try to INSERT with file_hash first, fall back without if column doesn't exist
     try {
       await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at, last_read)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
         [
           bookData.id,
           bookData.title,
@@ -349,8 +349,8 @@ router.post('/', upload.single('file'), async (req, res) => {
       // If file_hash column doesn't exist, retry without it
       if (insertErr.code === '42703') {
         await query(
-          `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
-           VALUES ($1, $2, $3, $4, $5, $6, now())`,
+          `INSERT INTO books (id, title, author, cover, file_url, format, added_at, last_read)
+           VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
           [
             bookData.id,
             bookData.title,

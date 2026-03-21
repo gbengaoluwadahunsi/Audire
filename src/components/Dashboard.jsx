@@ -23,10 +23,19 @@ const SORT_OPTIONS = [
   { id: 'last_read', label: 'Last read' },
 ];
 
+/** Server sends snake_case; some proxies may use camelCase */
 function getLastReadTimeMs(book) {
-  if (!book?.last_read) return null;
-  const t = new Date(book.last_read).getTime();
+  const raw = book?.last_read ?? book?.lastRead;
+  if (!raw) return null;
+  const t = new Date(raw).getTime();
   return Number.isFinite(t) ? t : null;
+}
+
+function getAddedAtTimeMs(book) {
+  const raw = book?.added_at ?? book?.addedAt;
+  if (!raw) return 0;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : 0;
 }
 
 function toUploadErrorMessage(fileName, err) {
@@ -268,11 +277,20 @@ function Dashboard({ onBackToLanding }) {
       if (sortBy === 'last_read') {
         const ta = getLastReadTimeMs(a);
         const tb = getLastReadTimeMs(b);
+        const aa = getAddedAtTimeMs(a);
+        const ab = getAddedAtTimeMs(b);
+        const aHas = ta != null;
+        const bHas = tb != null;
         let cmp = 0;
-        if (ta == null && tb == null) cmp = 0;
-        else if (ta == null) cmp = 1;
-        else if (tb == null) cmp = -1;
-        else cmp = order === 'asc' ? ta - tb : tb - ta;
+        if (aHas && bHas) {
+          cmp = order === 'asc' ? ta - tb : tb - ta;
+        } else if (aHas && !bHas) {
+          cmp = -1;
+        } else if (!aHas && bHas) {
+          cmp = 1;
+        } else {
+          cmp = order === 'asc' ? aa - ab : ab - aa;
+        }
         if (cmp !== 0) return cmp;
         return tiebreaker;
       }
@@ -404,7 +422,13 @@ function Dashboard({ onBackToLanding }) {
                   onChange={(e) => {
                     const v = e.target.value;
                     setLibrarySort(v);
-                    saveSettings({ ...getSettings(), librarySort: v });
+                    const s = getSettings();
+                    const next = { ...s, librarySort: v };
+                    if (v === 'last_read') {
+                      next.librarySortOrder = 'desc';
+                      setLibrarySortOrder('desc');
+                    }
+                    saveSettings(next);
                   }}
                 >
                   {SORT_OPTIONS.map((o) => (
@@ -412,13 +436,20 @@ function Dashboard({ onBackToLanding }) {
                   ))}
                 </select>
                 <button
+                  type="button"
                   className="dashboard-sort-order"
                   onClick={() => {
                     const v = librarySortOrder === 'asc' ? 'desc' : 'asc';
                     setLibrarySortOrder(v);
                     saveSettings({ ...getSettings(), librarySortOrder: v });
                   }}
-                  title={librarySortOrder === 'asc' ? 'Ascending' : 'Descending'}
+                  title={
+                    librarySort === 'last_read'
+                      ? (librarySortOrder === 'desc'
+                        ? 'Last read: newest first (click for oldest first)'
+                        : 'Last read: oldest first (click for newest first)')
+                      : (librarySortOrder === 'asc' ? 'Ascending' : 'Descending')
+                  }
                 >
                   {librarySortOrder === 'asc' ? '↑' : '↓'}
                 </button>

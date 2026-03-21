@@ -54,3 +54,6 @@ CREATE TABLE IF NOT EXISTS user_collection_books (
   PRIMARY KEY (collection_id, book_id)
 );
 CREATE INDEX IF NOT EXISTS idx_user_collection_books_order ON user_collection_books(collection_id, position);
+
+-- Optional: backfill so "Last read" sort has a timestamp for books never PATCHed (run once in Neon SQL)
+-- UPDATE books SET last_read = added_at WHERE last_read IS NULL;
