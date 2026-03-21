@@ -70,31 +70,35 @@ export function findChunkRangeInTextFuzzy(fullText, chunk, fromIndex) {
   return null;
 }
 
-export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef) {
+export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrollContainerEl) {
   if (!textLayerEl || !chunkText) return;
+  const savedTop = scrollContainerEl?.scrollTop;
+  const savedLeft = scrollContainerEl?.scrollLeft;
   const { full } = buildPdfLayerTextIndex(textLayerEl);
   const from = typeof fromIndexRef?.current === 'number' ? fromIndexRef.current : 0;
   const range = findChunkRangeInTextFuzzy(full, chunkText, from);
   if (!range) return;
   if (fromIndexRef) fromIndexRef.current = range.end;
   highlightPdfSpansForRange(textLayerEl, range.start, range.end);
+  if (scrollContainerEl != null && savedTop != null) {
+    const restore = () => {
+      scrollContainerEl.scrollTop = savedTop;
+      scrollContainerEl.scrollLeft = savedLeft ?? 0;
+    };
+    requestAnimationFrame(restore);
+    requestAnimationFrame(restore);
+  }
 }
 
 export function highlightPdfSpansForRange(textLayerEl, start, end) {
   clearPdfTtsHighlight(textLayerEl);
   if (!textLayerEl || start >= end) return;
   const { map } = buildPdfLayerTextIndex(textLayerEl);
-  let first = null;
   for (const { el, start: s, end: e } of map) {
     if (e <= start || s >= end) continue;
     el.classList.add('tts-reading');
-    if (!first) first = el;
   }
-  try {
-    first?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  } catch {
-    first?.scrollIntoView({ block: 'nearest' });
-  }
+  // No scrollIntoView — it fights manual scrolling in .pdf-viewer-content and can jump to the top.
 }
 
 /** Collect text nodes under root in document order */
@@ -137,17 +141,65 @@ function unwrapTtsMarks(root) {
   });
 }
 
+/** Capture scroll positions in an iframe document (EPUB) before DOM mutations that can reset scroll. */
+function captureDocScrollSnapshots(doc) {
+  const win = doc.defaultView;
+  if (!win) return [];
+  const html = doc.documentElement;
+  const body = doc.body;
+  const snaps = [];
+  const seen = new Set();
+  const push = (el) => {
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    snaps.push({ el, top: el.scrollTop, left: el.scrollLeft });
+  };
+  push(html);
+  push(body);
+  const se = doc.scrollingElement;
+  if (se) push(se);
+  try {
+    for (const el of body?.querySelectorAll('*') ?? []) {
+      if (snaps.length > 48) break;
+      if (el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2) push(el);
+    }
+  } catch {
+    /* ignore */
+  }
+  snaps.push({ win, top: win.scrollY, left: win.scrollX, isWin: true });
+  return snaps;
+}
+
+function restoreDocScrollSnapshots(snaps) {
+  if (!snaps?.length) return;
+  const apply = () => {
+    for (const s of snaps) {
+      if (s.isWin) s.win.scrollTo(s.left, s.top);
+      else {
+        s.el.scrollTop = s.top;
+        s.el.scrollLeft = s.left;
+      }
+    }
+  };
+  requestAnimationFrame(apply);
+  requestAnimationFrame(apply);
+}
+
 /**
  * Highlight a chunk inside EPUB (or any) HTML document body.
  */
 export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
   if (!doc?.body || !chunkText) return;
+  const scrollSnaps = captureDocScrollSnapshots(doc);
   const body = doc.body;
   unwrapTtsMarks(body);
   const { full, segments } = flattenTextWithNodes(body);
   const from = typeof fromIndexRef?.current === 'number' ? fromIndexRef.current : 0;
   const rangeChars = findChunkRangeInTextFuzzy(full, chunkText, from);
-  if (!rangeChars) return;
+  if (!rangeChars) {
+    restoreDocScrollSnapshots(scrollSnaps);
+    return;
+  }
   if (fromIndexRef) fromIndexRef.current = rangeChars.end;
 
   const { start, end } = rangeChars;
@@ -166,7 +218,10 @@ export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
       break;
     }
   }
-  if (!startNode || !endNode) return;
+  if (!startNode || !endNode) {
+    restoreDocScrollSnapshots(scrollSnaps);
+    return;
+  }
 
   try {
     const range = doc.createRange();
@@ -184,13 +239,10 @@ export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
       mark.appendChild(frag);
       range.insertNode(mark);
     }
-    try {
-      mark.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    } catch {
-      mark.scrollIntoView({ block: 'nearest' });
-    }
   } catch {
     /* ignore */
+  } finally {
+    restoreDocScrollSnapshots(scrollSnaps);
   }
 }
 

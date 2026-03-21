@@ -85,6 +85,9 @@ function Reader({ bookData, onBack, addToast }) {
   const epubResizeObserverRef = useRef(null);
   const ttsPdfHighlightFromRef = useRef(0);
   const ttsEpubHighlightFromRef = useRef(0);
+  /** Scrollable column for PDF — preserve scroll when TTS updates highlights / progress re-renders */
+  const pdfScrollContainerRef = useRef(null);
+  const ttsPlaybackProgressLastMsRef = useRef(0);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
 
   const clearTtsDomHighlights = () => {
@@ -801,6 +804,7 @@ function Reader({ bookData, onBack, addToast }) {
 
           ttsPdfHighlightFromRef.current = 0;
           ttsEpubHighlightFromRef.current = 0;
+          ttsPlaybackProgressLastMsRef.current = 0;
 
           await ttsManager.speakContinuous(
             chunks,
@@ -811,14 +815,29 @@ function Reader({ bookData, onBack, addToast }) {
               }
               if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
                 const ct = Math.max(1, totalPages - pdfPageOffset);
-                setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
+                const pct = ((playbackPdfPage - 1 + (done / total)) / ct) * 100;
+                const now = Date.now();
+                const throttleMs = 400;
+                if (
+                  done === 1 ||
+                  done === total ||
+                  now - ttsPlaybackProgressLastMsRef.current >= throttleMs
+                ) {
+                  ttsPlaybackProgressLastMsRef.current = now;
+                  setPlaybackProgress(pct);
+                }
               }
             },
             sessionId,
             (chunkIndex, chunkText) => {
               if (sessionId !== playbackSessionRef.current || !chunkText) return;
               if (bookData.format === 'pdf') {
-                applyPdfTtsHighlight(pdfTextLayerRef.current, chunkText, ttsPdfHighlightFromRef);
+                applyPdfTtsHighlight(
+                  pdfTextLayerRef.current,
+                  chunkText,
+                  ttsPdfHighlightFromRef,
+                  pdfScrollContainerRef.current,
+                );
               } else if (bookData.format === 'epub') {
                 try {
                   const iframe = viewerRef.current?.querySelector?.('iframe');
@@ -1453,7 +1472,7 @@ function Reader({ bookData, onBack, addToast }) {
             {bookData.format === 'epub' ? (
               <div ref={viewerRef} className="epub-viewer" />
             ) : (
-              <div className="pdf-viewer-content">
+              <div className="pdf-viewer-content" ref={pdfScrollContainerRef}>
                 <div className="pdf-page-row">
                   <form className="pdf-page-indicator" onSubmit={handlePageInputSubmit}>
                     <span className="pdf-page-label">Page</span>
