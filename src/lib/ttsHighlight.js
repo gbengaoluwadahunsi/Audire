@@ -3,6 +3,9 @@
  * Chunks come from sanitized text; on-screen text may differ slightly — matching is word-based + fuzzy.
  */
 
+/** Off by default: fuzzy matching can highlight the wrong regions (solid yellow bars). Audio still works. */
+const TTS_DOM_HIGHLIGHT_ENABLED = false;
+
 export function buildPdfLayerTextIndex(textLayerEl) {
   if (!textLayerEl) return { full: '', map: [] };
   const spans = Array.from(textLayerEl.querySelectorAll('span'));
@@ -153,7 +156,7 @@ export function findChunkRangeInTextFuzzy(fullText, chunk, fromIndex) {
 }
 
 export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrollContainerEl, rawPageTextFallback) {
-  if (!textLayerEl || !chunkText) return;
+  if (!TTS_DOM_HIGHLIGHT_ENABLED || !textLayerEl || !chunkText) return;
   const savedTop = scrollContainerEl?.scrollTop;
   const savedLeft = scrollContainerEl?.scrollLeft;
   const { full } = buildPdfLayerTextIndex(textLayerEl);
@@ -281,7 +284,7 @@ function restoreDocScrollSnapshots(snaps) {
  * Highlight a chunk inside EPUB (or any) HTML document body.
  */
 export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
-  if (!doc?.body || !chunkText) return;
+  if (!TTS_DOM_HIGHLIGHT_ENABLED || !doc?.body || !chunkText) return;
   const scrollSnaps = captureDocScrollSnapshots(doc);
   const body = doc.body;
   unwrapTtsMarks(body);
