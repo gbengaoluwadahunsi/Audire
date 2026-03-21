@@ -22,6 +22,9 @@ import { ocrPdfPage, terminateOcr } from '../lib/ocr';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
+
+/** Epub.js SVG highlights often mis-render; highlights stay in the sidebar list only. */
+const EPUB_RENDER_ANNOTATION_HIGHLIGHTS = false;
 import { updateBookProgress, downloadBookFile } from '../lib/api';
 import { getSettings, getPdfOffset, setPdfOffset } from '../lib/settings';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
@@ -301,21 +304,23 @@ function Reader({ bookData, onBack, addToast }) {
             };
             doc.addEventListener('selectionchange', notifySelection);
 
-            void (async () => {
-              const bookHighlights = await getHighlights(bookData.id);
-              bookHighlights.forEach((h) => {
-                try {
-                  const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
-                  rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
-                    fill: colorInfo.color,
-                    'fill-opacity': '0.4',
-                    'mix-blend-mode': 'multiply',
-                  });
-                } catch {
-                  // CFI may be in different section.
-                }
-              });
-            })();
+            if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
+              void (async () => {
+                const bookHighlights = await getHighlights(bookData.id);
+                bookHighlights.forEach((h) => {
+                  try {
+                    const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
+                    rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
+                      fill: colorInfo.color,
+                      'fill-opacity': '0.4',
+                      'mix-blend-mode': 'multiply',
+                    });
+                  } catch {
+                    // CFI may be in different section.
+                  }
+                });
+              })();
+            }
 
             const style = doc.createElement('style');
             if (settings.theme === 'dark') {
@@ -1075,30 +1080,34 @@ function Reader({ bookData, onBack, addToast }) {
       if (cfi && selectedText) {
         await addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
         setHighlights(await getHighlights(bookData.id));
-        try {
-          const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
-            fill: colorInfo.color,
-            'fill-opacity': '0.4',
-            'mix-blend-mode': 'multiply',
-          });
-        } catch {
-          // Annotation may fail for some CFIs.
+        if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
+          try {
+            const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
+            renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+              fill: colorInfo.color,
+              'fill-opacity': '0.4',
+              'mix-blend-mode': 'multiply',
+            });
+          } catch {
+            // Annotation may fail for some CFIs.
+          }
         }
       } else if (cfi) {
         const doc = bookRef.current?.spine?.get(loc?.start?.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 200) || selectedText || '';
         await addHighlight(bookData.id, { cfi, text, color: highlightColor });
         setHighlights(await getHighlights(bookData.id));
-        try {
-          const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
-            fill: colorInfo.color,
-            'fill-opacity': '0.4',
-            'mix-blend-mode': 'multiply',
-          });
-        } catch {
-          // Ignore fallback annotation failures.
+        if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
+          try {
+            const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
+            renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+              fill: colorInfo.color,
+              'fill-opacity': '0.4',
+              'mix-blend-mode': 'multiply',
+            });
+          } catch {
+            // Ignore fallback annotation failures.
+          }
         }
       } else {
         addToast?.('Select text first, then click the highlighter.', 'info');
