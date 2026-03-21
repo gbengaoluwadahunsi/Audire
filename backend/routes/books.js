@@ -571,6 +571,47 @@ router.patch('/:id/progress', async (req, res) => {
   }
 });
 
+router.patch('/:id', async (req, res) => {
+  try {
+    const { title, author } = req.body || {};
+    if (title !== undefined) {
+      if (typeof title !== 'string' || !title.trim()) {
+        return res.status(400).json({ error: 'title must be a non-empty string' });
+      }
+    }
+    if (author !== undefined && author !== null && typeof author !== 'string') {
+      return res.status(400).json({ error: 'author must be a string or null' });
+    }
+    if (title === undefined && author === undefined) {
+      return res.status(400).json({ error: 'Provide title and/or author to update' });
+    }
+
+    const { rows: existing } = await query('SELECT id FROM books WHERE id = $1', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: 'Book not found' });
+
+    const sets = [];
+    const params = [];
+    let i = 1;
+    if (title !== undefined) {
+      sets.push(`title = $${i++}`);
+      params.push(title.trim());
+    }
+    if (author !== undefined) {
+      sets.push(`author = $${i++}`);
+      params.push(author === '' || author === null ? null : author.trim());
+    }
+    params.push(req.params.id);
+    await query(`UPDATE books SET ${sets.join(', ')} WHERE id = $${i}`, params);
+
+    const { rows } = await query('SELECT * FROM books WHERE id = $1', [req.params.id]);
+    const baseUrl = getBaseUrl(req);
+    res.json(normalizeBookUrls(rows[0], baseUrl));
+  } catch (err) {
+    console.error('Update book metadata error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', async (req, res) => {
   try {
     const { rows } = await query('SELECT format, file_url FROM books WHERE id = $1', [req.params.id]);

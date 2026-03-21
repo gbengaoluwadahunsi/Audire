@@ -1242,7 +1242,8 @@ html.light .dashboard-sort select {
 }
 
 .dashboard-book-delete,
-.dashboard-book-collection {
+.dashboard-book-collection,
+.dashboard-book-rename {
   position: absolute;
   bottom: 8px;
   padding: 6px;
@@ -1253,17 +1254,20 @@ html.light .dashboard-sort select {
   transition: opacity 0.2s;
 }
 
-.dashboard-book-delete { left: 8px; }
-.dashboard-book-collection { left: 40px; }
+.dashboard-book-rename { left: 8px; }
+.dashboard-book-delete { left: 40px; }
+.dashboard-book-collection { left: 72px; }
 
 .dashboard-book-card:hover .dashboard-book-delete,
-.dashboard-book-card:hover .dashboard-book-collection {
+.dashboard-book-card:hover .dashboard-book-collection,
+.dashboard-book-card:hover .dashboard-book-rename {
   opacity: 1;
 }
 
 @media (hover: none) {
   .dashboard-book-delete,
-  .dashboard-book-collection {
+  .dashboard-book-collection,
+  .dashboard-book-rename {
     opacity: 1;
   }
 }
@@ -1348,6 +1352,50 @@ html.light .dashboard-sort select {
   background: var(--error);
   color: white;
   border-color: var(--error);
+}
+
+.rename-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  min-width: 320px;
+  max-width: min(420px, 92vw);
+  box-shadow: var(--shadow-lg);
+}
+
+.rename-modal-heading {
+  margin: 0 0 16px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rename-modal-field {
+  margin-bottom: 14px;
+}
+
+.rename-modal-field label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.rename-modal-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.rename-modal-field input:focus {
+  outline: none;
+  border-color: var(--accent, #8b5cf6);
 }
 
 .collection-modal {
