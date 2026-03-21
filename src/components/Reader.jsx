@@ -6,6 +6,12 @@ import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ttsManager } from '../lib/ttsManager';
 import { sanitizeTextForTTS, splitIntoSentenceChunks } from '../lib/textSanitation';
 import {
+  applyPdfTtsHighlight,
+  applyEpubTtsHighlight,
+  clearPdfTtsHighlight,
+  clearEpubTtsHighlight,
+} from '../lib/ttsHighlight';
+import {
   extractTextFromSection,
   extractTextFromPdfDoc,
   extractTextFromPdfDocRange,
@@ -77,7 +83,19 @@ function Reader({ bookData, onBack, addToast }) {
   const fontSizeRef = useRef(null);
   const selectedCfiRangeRef = useRef(null);
   const epubResizeObserverRef = useRef(null);
+  const ttsPdfHighlightFromRef = useRef(0);
+  const ttsEpubHighlightFromRef = useRef(0);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
+
+  const clearTtsDomHighlights = () => {
+    clearPdfTtsHighlight(pdfTextLayerRef.current);
+    try {
+      const iframe = viewerRef.current?.querySelector?.('iframe');
+      clearEpubTtsHighlight(iframe?.contentDocument);
+    } catch {
+      /* ignore */
+    }
+  };
   /** Latest progress for flush on tab close / reader exit */
   const lastProgressRef = useRef({ bookId: null, cfi: null, progressPercent: null, totalPages: null });
 
@@ -584,6 +602,7 @@ function Reader({ bookData, onBack, addToast }) {
     setIsPlayingTTS(true);
     setIsTTSLoading(true);
     play(bookData);
+    clearTtsDomHighlights();
 
     try {
       if (bookData.format === 'epub') {
@@ -780,16 +799,37 @@ function Reader({ bookData, onBack, addToast }) {
           console.log(`Reader: Sending ${chunks.length} chunks to TTS engine`);
           let firstChunkSignalled = !isEdgeTTS;
 
-          await ttsManager.speakContinuous(chunks, (done, total) => {
-            if (!firstChunkSignalled) {
-              firstChunkSignalled = true;
-              setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
-            }
-            if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
-              const ct = Math.max(1, totalPages - pdfPageOffset);
-              setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
-            }
-          }, sessionId);
+          ttsPdfHighlightFromRef.current = 0;
+          ttsEpubHighlightFromRef.current = 0;
+
+          await ttsManager.speakContinuous(
+            chunks,
+            (done, total) => {
+              if (!firstChunkSignalled) {
+                firstChunkSignalled = true;
+                setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
+              }
+              if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
+                const ct = Math.max(1, totalPages - pdfPageOffset);
+                setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
+              }
+            },
+            sessionId,
+            (chunkIndex, chunkText) => {
+              if (sessionId !== playbackSessionRef.current || !chunkText) return;
+              if (bookData.format === 'pdf') {
+                applyPdfTtsHighlight(pdfTextLayerRef.current, chunkText, ttsPdfHighlightFromRef);
+              } else if (bookData.format === 'epub') {
+                try {
+                  const iframe = viewerRef.current?.querySelector?.('iframe');
+                  const doc = iframe?.contentDocument;
+                  if (doc) applyEpubTtsHighlight(doc, chunkText, ttsEpubHighlightFromRef);
+                } catch {
+                  /* ignore */
+                }
+              }
+            },
+          );
 
           if (!firstChunkSignalled) setIsTTSLoading(false); // fallback: all chunks were skipped
         }
@@ -854,6 +894,9 @@ function Reader({ bookData, onBack, addToast }) {
           ttsManager.stop();
         }
       }
+      if (!ttsManager.isPaused) {
+        clearTtsDomHighlights();
+      }
     }
   };
 
@@ -868,6 +911,7 @@ function Reader({ bookData, onBack, addToast }) {
       setIsPlayingTTS(false);
       setIsTTSLoading(false);
       pause();
+      clearTtsDomHighlights();
     }
   };
 
