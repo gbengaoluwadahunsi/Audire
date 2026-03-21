@@ -832,17 +832,25 @@ function Reader({ bookData, onBack, addToast }) {
             (chunkIndex, chunkText) => {
               if (sessionId !== playbackSessionRef.current || !chunkText) return;
               if (bookData.format === 'pdf') {
-                applyPdfTtsHighlight(
-                  pdfTextLayerRef.current,
-                  chunkText,
-                  ttsPdfHighlightFromRef,
-                  pdfScrollContainerRef.current,
-                );
+                const run = () => {
+                  applyPdfTtsHighlight(
+                    pdfTextLayerRef.current,
+                    chunkText,
+                    ttsPdfHighlightFromRef,
+                    pdfScrollContainerRef.current,
+                    pdfText || '',
+                  );
+                };
+                requestAnimationFrame(run);
               } else if (bookData.format === 'epub') {
                 try {
                   const iframe = viewerRef.current?.querySelector?.('iframe');
                   const doc = iframe?.contentDocument;
-                  if (doc) applyEpubTtsHighlight(doc, chunkText, ttsEpubHighlightFromRef);
+                  if (doc) {
+                    requestAnimationFrame(() => {
+                      applyEpubTtsHighlight(doc, chunkText, ttsEpubHighlightFromRef);
+                    });
+                  }
                 } catch {
                   /* ignore */
                 }

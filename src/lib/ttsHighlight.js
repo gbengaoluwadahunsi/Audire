@@ -56,27 +56,119 @@ export function findChunkRangeInText(fullText, chunk, fromIndex = 0) {
   return null;
 }
 
+/**
+ * Case-insensitive word sequence match (handles Title vs title; still needs same words as layer).
+ */
+function findChunkRangeInTextInsensitive(fullText, chunk, fromIndex) {
+  if (!fullText || !chunk) return null;
+  const words = chunk.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const lowerFull = fullText.toLowerCase();
+  const lowerWords = words.map((w) => w.toLowerCase());
+  let pos = Math.max(0, fromIndex);
+  const maxScan = Math.min(fullText.length, fromIndex + 800000);
+  while (pos < maxScan) {
+    const idx = lowerFull.indexOf(lowerWords[0], pos);
+    if (idx === -1) break;
+    let end = idx + words[0].length;
+    let ok = true;
+    for (let w = 1; w < words.length; w++) {
+      let p = end;
+      while (p < fullText.length && /\s/.test(fullText[p])) p++;
+      const slice = fullText.slice(p, p + words[w].length);
+      if (slice.toLowerCase() !== lowerWords[w]) {
+        ok = false;
+        break;
+      }
+      end = p + words[w].length;
+    }
+    if (ok) return { start: idx, end };
+    pos = idx + 1;
+  }
+  if (words.length > 6) {
+    return findChunkRangeInTextInsensitive(fullText, words.slice(0, 6).join(' '), fromIndex);
+  }
+  return null;
+}
+
+/** Approximate inverse of sanitizeTextForTTS so layer text (still "Mr.") can match TTS chunk ("Mister"). */
+function loosenTtsChunkForLayerMatch(chunk) {
+  if (!chunk) return chunk;
+  return chunk
+    .replace(/\bMister\b/g, 'Mr.')
+    .replace(/\bMisses\b/g, 'Mrs.')
+    .replace(/\bMiss\b/g, 'Ms.')
+    .replace(/\bDoctor\b/g, 'Dr.')
+    .replace(/\bProfessor\b/g, 'Prof.')
+    .replace(/\bSaint\b/g, 'St.')
+    .replace(/\bversus\b/gi, 'vs.')
+    .replace(/\betcetera\b/gi, 'etc.');
+}
+
+/** Match first N words with regex (case-insensitive); tolerates minor punctuation in layer text. */
+function findChunkRangeByLeadingWordsRegex(fullText, chunk, fromIndex) {
+  const words = chunk.trim().split(/\s+/).filter(Boolean);
+  for (let n = Math.min(words.length, 14); n >= 3; n--) {
+    const sub = words.slice(0, n);
+    const escaped = sub.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    try {
+      const re = new RegExp(escaped, 'gi');
+      re.lastIndex = fromIndex;
+      const m = re.exec(fullText);
+      if (m) return { start: m.index, end: m.index + m[0].length };
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 export function findChunkRangeInTextFuzzy(fullText, chunk, fromIndex) {
   let r = findChunkRangeInText(fullText, chunk, fromIndex);
   if (r) return r;
   const simplified = chunk.replace(/[—–]/g, ',').replace(/\s+/g, ' ').trim();
   r = findChunkRangeInText(fullText, simplified, fromIndex);
   if (r) return r;
+  r = findChunkRangeInTextInsensitive(fullText, chunk, fromIndex);
+  if (r) return r;
+  r = findChunkRangeInTextInsensitive(fullText, simplified, fromIndex);
+  if (r) return r;
   const words = chunk.trim().split(/\s+/).filter(Boolean);
   for (let n = Math.min(words.length, 14); n >= 4; n--) {
     r = findChunkRangeInText(fullText, words.slice(0, n).join(' '), fromIndex);
     if (r) return r;
   }
+  r = findChunkRangeByLeadingWordsRegex(fullText, chunk, fromIndex);
+  if (r) return r;
+  const loosened = loosenTtsChunkForLayerMatch(chunk);
+  if (loosened !== chunk) {
+    r = findChunkRangeInText(fullText, loosened, fromIndex);
+    if (r) return r;
+    r = findChunkRangeInTextInsensitive(fullText, loosened, fromIndex);
+    if (r) return r;
+    r = findChunkRangeByLeadingWordsRegex(fullText, loosened, fromIndex);
+    if (r) return r;
+  }
   return null;
 }
 
-export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrollContainerEl) {
+export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrollContainerEl, rawPageTextFallback) {
   if (!textLayerEl || !chunkText) return;
   const savedTop = scrollContainerEl?.scrollTop;
   const savedLeft = scrollContainerEl?.scrollLeft;
   const { full } = buildPdfLayerTextIndex(textLayerEl);
   const from = typeof fromIndexRef?.current === 'number' ? fromIndexRef.current : 0;
-  const range = findChunkRangeInTextFuzzy(full, chunkText, from);
+  let range = findChunkRangeInTextFuzzy(full, chunkText, from);
+  // Layer string order can differ slightly from extractTextFromPdf; try same chunk on raw page text then locate substring in layer.
+  if (!range && rawPageTextFallback && typeof rawPageTextFallback === 'string') {
+    const r2 = findChunkRangeInTextFuzzy(rawPageTextFallback, chunkText, from);
+    if (r2) {
+      const snippet = rawPageTextFallback.slice(r2.start, r2.end);
+      range =
+        findChunkRangeInText(full, snippet, 0) ||
+        findChunkRangeInTextFuzzy(full, snippet, 0);
+    }
+  }
   if (!range) return;
   if (fromIndexRef) fromIndexRef.current = range.end;
   highlightPdfSpansForRange(textLayerEl, range.start, range.end);

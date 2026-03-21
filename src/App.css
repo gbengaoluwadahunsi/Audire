@@ -1201,13 +1201,30 @@
   gap: 4px;
 }
 
-.dashboard-sort select {
+.dashboard-sort select,
+.dashboard-sort-select {
   padding: 8px 12px;
-  background: var(--surface);
+  min-width: 11rem;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* Native dropdown list follows OS theme; align with app dark/light so options stay readable */
+html:not(.light) .dashboard-sort select {
+  color-scheme: dark;
+}
+
+html.light .dashboard-sort select {
+  color-scheme: light;
+}
+
+.dashboard-sort select option {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }
 
 .dashboard-sort-order {
@@ -2501,12 +2518,16 @@
   background: rgba(139, 92, 246, 0.3);
 }
 
-/* TTS read-along highlight (PDF text layer spans are transparent; background shows over the page) */
+/* TTS read-along highlight (PDF text layer spans use transparent color; background paints over the page) */
 .pdf-text-layer span.tts-reading {
-  background-color: rgba(250, 204, 21, 0.45);
-  border-radius: 1px;
+  background-color: rgba(255, 214, 0, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(255, 160, 0, 0.55);
+  border-radius: 2px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  position: relative;
+  z-index: 3;
+  mix-blend-mode: multiply;
 }
 
 .nav-btn {
