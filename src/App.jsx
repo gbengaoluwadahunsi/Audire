@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import LandingPage from './components/LandingPage';
-import Dashboard from './components/Dashboard';
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
 import { getSettings } from './lib/settings';
 import './App.css';
 
@@ -31,7 +32,9 @@ function App() {
       {view === 'landing' ? (
         <LandingPage onEnter={() => setView('dashboard')} />
       ) : (
-        <Dashboard onBackToLanding={() => setView('landing')} />
+        <Suspense fallback={<div className="app-route-fallback">Loading library…</div>}>
+          <Dashboard onBackToLanding={() => setView('landing')} />
+        </Suspense>
       )}
     </>
   );

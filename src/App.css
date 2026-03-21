@@ -1,3 +1,14 @@
+/* Lazy-loaded route (Dashboard) */
+.app-route-fallback {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
 /* ========================================
    LANDING PAGE
    ======================================== */
@@ -2488,6 +2499,14 @@
 
 .pdf-text-layer ::selection {
   background: rgba(139, 92, 246, 0.3);
+}
+
+/* TTS read-along highlight (PDF text layer spans are transparent; background shows over the page) */
+.pdf-text-layer span.tts-reading {
+  background-color: rgba(250, 204, 21, 0.45);
+  border-radius: 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .nav-btn {
