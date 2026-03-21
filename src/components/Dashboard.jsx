@@ -23,6 +23,12 @@ const SORT_OPTIONS = [
   { id: 'last_read', label: 'Last read' },
 ];
 
+function getLastReadTimeMs(book) {
+  if (!book?.last_read) return null;
+  const t = new Date(book.last_read).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
 function toUploadErrorMessage(fileName, err) {
   const raw = String(err?.message || 'Upload failed');
   const lower = raw.toLowerCase();
@@ -135,6 +141,18 @@ function Dashboard({ onBackToLanding }) {
     }
   };
 
+  const hadReaderOpenRef = useRef(false);
+  useEffect(() => {
+    if (selectedBook) {
+      hadReaderOpenRef.current = true;
+      return;
+    }
+    if (hadReaderOpenRef.current) {
+      hadReaderOpenRef.current = false;
+      void loadBooks();
+    }
+  }, [selectedBook]);
+
   const MAX_ATTEMPT_SIZE = 100 * 1024 * 1024; // 100 MB - won't try to compress larger (memory risk)
 
   const handleFileUpload = async (e) => {
@@ -239,10 +257,24 @@ function Dashboard({ onBackToLanding }) {
 
       // Pin last-opened book to top when sorting by "Last read" (desc)
       if (sortBy === 'last_read' && order === 'desc' && lastOpenedId) {
-        const aPin = a.id === lastOpenedId;
-        const bPin = b.id === lastOpenedId;
+        const aPin = String(a.id) === String(lastOpenedId);
+        const bPin = String(b.id) === String(lastOpenedId);
         if (aPin && !bPin) return -1;
         if (!aPin && bPin) return 1;
+      }
+
+      const tiebreaker = typeof a.id === 'string' ? (a.id || '').localeCompare(b.id || '') : ((a.id || 0) - (b.id || 0));
+
+      if (sortBy === 'last_read') {
+        const ta = getLastReadTimeMs(a);
+        const tb = getLastReadTimeMs(b);
+        let cmp = 0;
+        if (ta == null && tb == null) cmp = 0;
+        else if (ta == null) cmp = 1;
+        else if (tb == null) cmp = -1;
+        else cmp = order === 'asc' ? ta - tb : tb - ta;
+        if (cmp !== 0) return cmp;
+        return tiebreaker;
       }
 
       let cmp = 0;
@@ -254,10 +286,7 @@ function Dashboard({ onBackToLanding }) {
         cmp = new Date(a.added_at || 0) - new Date(b.added_at || 0);
       } else if (sortBy === 'progress_percent') {
         cmp = (getProgressPercent(a) || 0) - (getProgressPercent(b) || 0);
-      } else {
-        cmp = new Date(a.last_read || 0) - new Date(b.last_read || 0);
       }
-      const tiebreaker = typeof a.id === 'string' ? (a.id || '').localeCompare(b.id || '') : ((a.id || 0) - (b.id || 0));
       return mult * (cmp || tiebreaker);
     });
 
@@ -368,7 +397,10 @@ function Dashboard({ onBackToLanding }) {
               </div>
               <div className="dashboard-sort">
                 <select
+                  className="dashboard-sort-select"
                   value={librarySort}
+                  aria-label="Sort books by"
+                  title="Sort books by"
                   onChange={(e) => {
                     const v = e.target.value;
                     setLibrarySort(v);
