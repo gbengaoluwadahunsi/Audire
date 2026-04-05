@@ -56,20 +56,6 @@ export async function fetchBooks() {
   return Array.isArray(books) ? books.map(normalizeBookUrls) : [];
 }
 
-export async function importOrphanBook(bookId) {
-  const res = await fetch(url('/api/books/import-orphan'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bookId }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
-  }
-  const created = await res.json();
-  return normalizeBookUrls(created);
-}
-
 export async function uploadBook(fileBlob, fileName = 'book.epub') {
   const form = new FormData();
   form.append('file', fileBlob, fileName);
@@ -95,7 +81,6 @@ export async function updateBookProgress(bookId, cfi, progressPercent = null, to
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    keepalive: true,
   }).then((r) => (r.ok ? r.json() : r.json().then((e) => { throw new Error(e.error || r.statusText); })));
 }
 
@@ -114,21 +99,6 @@ export function getEpubPdfUrl(bookId) {
 
 export async function deleteBook(bookId) {
   return fetchJson(`/api/books/${bookId}`, { method: 'DELETE' });
-}
-
-/** Update display title and/or author (does not change the file). */
-export async function updateBookMetadata(bookId, { title, author } = {}) {
-  const body = {};
-  if (title !== undefined) body.title = title;
-  if (author !== undefined) body.author = author;
-  if (Object.keys(body).length === 0) {
-    throw new Error('Nothing to update');
-  }
-  const book = await fetchJson(`/api/books/${encodeURIComponent(bookId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  });
-  return normalizeBookUrls(book);
 }
 
 export async function repairBookCover(book) {
@@ -187,77 +157,5 @@ export async function aiFlashcards(text) {
 export async function aiVisualize(text) {
   const { content } = await aiFetch('/api/ai/visualize', { text });
   return content ?? '';
-}
-
-// ─── Library sync (bookmarks, highlights, collections in Postgres) ───
-
-export async function librarySyncFetchBookmarks(bookId) {
-  return fetchJson(`/api/library-sync/bookmarks/${encodeURIComponent(bookId)}`);
-}
-
-export async function librarySyncCreateBookmark(bookId, { cfi, text }) {
-  return fetchJson(`/api/library-sync/bookmarks/${encodeURIComponent(bookId)}`, {
-    method: 'POST',
-    body: JSON.stringify({ cfi, text }),
-  });
-}
-
-export async function librarySyncDeleteBookmark(id) {
-  return fetchJson(`/api/library-sync/bookmarks/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-export async function librarySyncFetchHighlights(bookId) {
-  return fetchJson(`/api/library-sync/highlights/${encodeURIComponent(bookId)}`);
-}
-
-export async function librarySyncCreateHighlight(bookId, { cfi, text, color }) {
-  return fetchJson(`/api/library-sync/highlights/${encodeURIComponent(bookId)}`, {
-    method: 'POST',
-    body: JSON.stringify({ cfi, text, color }),
-  });
-}
-
-export async function librarySyncUpdateHighlightColor(id, color) {
-  return fetchJson(`/api/library-sync/highlights/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ color }),
-  });
-}
-
-export async function librarySyncDeleteHighlight(id) {
-  return fetchJson(`/api/library-sync/highlights/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-export async function librarySyncFetchCollections() {
-  return fetchJson('/api/library-sync/collections');
-}
-
-export async function librarySyncCreateCollection(name) {
-  return fetchJson('/api/library-sync/collections', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  });
-}
-
-export async function librarySyncDeleteCollection(id) {
-  return fetchJson(`/api/library-sync/collections/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-export async function librarySyncAddBookToCollection(collectionId, bookId) {
-  return fetchJson(`/api/library-sync/collections/${encodeURIComponent(collectionId)}/books`, {
-    method: 'POST',
-    body: JSON.stringify({ bookId }),
-  });
-}
-
-export async function librarySyncRemoveBookFromCollection(collectionId, bookId) {
-  return fetchJson(
-    `/api/library-sync/collections/${encodeURIComponent(collectionId)}/books/${encodeURIComponent(bookId)}`,
-    { method: 'DELETE' }
-  );
-}
-
-export function isLibrarySyncConfigured() {
-  return !!(import.meta.env.VITE_API_URL || '').trim();
 }
 

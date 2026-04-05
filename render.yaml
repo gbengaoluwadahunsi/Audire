@@ -3,7 +3,7 @@ services:
     name: audire-backend
     env: node
     buildCommand: cd backend && npm install
-    startCommand: cd backend && node index.js
+    startCommand: cd backend && node --max-old-space-size=400 index.js
     envVars:
       - key: NODE_VERSION
         value: 20

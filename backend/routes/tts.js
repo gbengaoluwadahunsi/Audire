@@ -40,14 +40,18 @@ router.post('/', async (req, res) => {
       });
 
       await engine.ttsPromise(trimmed, outPath);
-      const mp3 = await fs.readFile(outPath);
+      const stat = await fs.stat(outPath);
 
       res.set({
         'Content-Type': 'audio/mpeg',
-        'Content-Length': String(mp3.length),
+        'Content-Length': String(stat.size),
         'Cache-Control': 'no-store',
       });
-      return res.send(mp3);
+      const { createReadStream } = await import('fs');
+      const stream = createReadStream(outPath);
+      stream.on('end', () => fs.unlink(outPath).catch(() => {}));
+      stream.on('error', () => fs.unlink(outPath).catch(() => {}));
+      return stream.pipe(res);
     } catch (err) {
       retryCount++;
       const message = err?.message || String(err);

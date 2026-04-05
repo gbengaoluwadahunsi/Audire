@@ -193,14 +193,21 @@ async function processEpubCustom(filePath, id, coversDir) {
 }
 
 async function processPdf(filePath, id, coversDir) {
-  const buf = await fs.readFile(filePath);
-  const pdfDoc = await PDFDocument.load(buf);
-  const title = pdfDoc.getTitle() || path.basename(filePath, '.pdf');
-  const author = pdfDoc.getAuthor() || null;
+  let title = path.basename(filePath, '.pdf');
+  let author = null;
+  try {
+    const buf = await fs.readFile(filePath);
+    const pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true });
+    title = pdfDoc.getTitle() || title;
+    author = pdfDoc.getAuthor() || null;
+    // Let GC reclaim the buffer and parsed doc
+  } catch (err) {
+    console.warn('PDF metadata extraction failed, using filename:', err?.message);
+  }
 
   let coverPath = null;
   try {
-    const doc = await pdf(filePath, { scale: 2 });
+    const doc = await pdf(filePath, { scale: 1 });
     const firstPage = await doc.getPage(1);
     if (firstPage) {
       const coverFileName = `${id}.png`;
@@ -228,7 +235,7 @@ function extractXml(xml, tag) {
 export async function extractCover(filePath, id, format, coversDir) {
   if (format === 'pdf') {
     try {
-      const doc = await pdf(filePath, { scale: 2 });
+      const doc = await pdf(filePath, { scale: 1 });
       const firstPage = await doc.getPage(1);
       if (firstPage) {
         const coverPath = path.join(coversDir, `${id}.png`);

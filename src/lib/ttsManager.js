@@ -21,9 +21,7 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
   let timer;
   try {
     const controller = new AbortController();
-    // Backend can take up to ~30s per chunk; allow headroom for network + long text.
-    const timeoutMs = Math.min(120000, 20000 + Math.min(trimmed.length, 5000) * 25);
-    timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(_apiUrl('/api/tts'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,6 +88,7 @@ class TTSManager {
     this.voiceId = null;
     this.engine = 'web-speech'; // 'web-speech' | 'edge-tts'
     this.edgeTtsVoice = 'en-US-AvaMultilingualNeural';
+    this.onEdgeFallback = null;
     this.isLoaded = true;
     this.isLoading = false;
     this.currentUtterance = null;
@@ -97,6 +96,7 @@ class TTSManager {
     this._stopped = false;
     this.isPaused = false;
     this._audioCache = new Map();
+    this._failureCount = 0;
     // Web Audio API — used for gapless Edge TTS playback
     this._audioCtx = null;
     this._gainNode = null;
@@ -205,22 +205,16 @@ class TTSManager {
 
   async _speakEdgeTTSChunk(text) {
     let blob;
-    let attempt = 0;
-    while (!this._stopped) {
-      try {
-        blob = await _fetchEdgeTTS(text, this.edgeTtsVoice, this.speed);
-      } catch (err) {
-        if (this._stopped) return;
-        console.warn('[TTS] Edge TTS failed, retrying:', err?.message);
-        await new Promise((r) => setTimeout(r, Math.min(4000, 200 + attempt * 100)));
-        attempt++;
-        continue;
-      }
-      if (blob && blob.size >= 100) break;
-      await new Promise((r) => setTimeout(r, Math.min(4000, 200 + attempt * 100)));
-      attempt++;
+    try {
+      blob = await _fetchEdgeTTS(text, this.edgeTtsVoice, this.speed);
+    } catch (err) {
+      console.warn('[TTS] Edge TTS failed, falling back to Web Speech:', err?.message);
+      this.onEdgeFallback?.(err?.message);
+      return this._speakWebSpeechChunk(text);
     }
-    if (!blob || blob.size < 100) return;
+    if (!blob || blob.size < 100) {
+      return this._speakWebSpeechChunk(text);
+    }
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.volume = this.volume ?? 1;
@@ -256,48 +250,17 @@ class TTSManager {
 
     const promise = (async () => {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
-      const blob = await _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed);
-      if (!blob || blob.size < 100) {
-        this._blobCache.delete(index);
-        return null;
-      }
-      return blob;
+      return _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed);
     })();
     this._blobCache.set(index, { key, promise });
     return promise;
   }
 
-  /**
-   * Block until Edge TTS returns audio for this chunk (retries on timeout/errors).
-   * Does not fall back to Web Speech. Respects stop, pause, and session changes.
-   */
-  async _awaitValidEdgeBlob(textChunks, index, sessionId) {
-    let attempt = 0;
-    while (!this._stopped && (!sessionId || sessionId === this.currentSessionId)) {
-      await this._waitIfPaused(sessionId);
-      if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
-      this._blobCache.delete(index);
-      const p = this._getBlobForChunk(textChunks, index, sessionId);
-      const blob = p ? await p : null;
-      if (blob && blob.size >= 100) return blob;
-      this._blobCache.delete(index);
-      if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
-      if (attempt % 8 === 0) {
-        console.warn(`[TTS] Waiting for Edge TTS chunk ${index}…`);
-      }
-      const backoff = Math.min(4000, 150 + attempt * 80);
-      const cooldownLeft = _edgeBackendUnavailableUntil - Date.now();
-      const waitMs = cooldownLeft > 0 ? Math.min(60000, cooldownLeft + 500) : backoff;
-      await new Promise((r) => setTimeout(r, waitMs));
-      attempt++;
-    }
-    return null;
-  }
-
-  async speakContinuous(textChunks, onChunkComplete, sessionId, onChunkStart) {
+  async speakContinuous(textChunks, onChunkComplete, sessionId) {
     if (sessionId) this.currentSessionId = sessionId;
     this._stopped = false;
     this.isPaused = false;
+    this._failureCount = 0;
 
     console.log(`[TTS] Starting ${this.engine} playback with ${textChunks.length} chunks`);
 
@@ -341,32 +304,45 @@ class TTSManager {
 
         console.log(`[TTS] Processing chunk ${currentIndex}/${textChunks.length}: "${chunk.substring(0, 50)}..."`);
 
-        let blob = await this._awaitValidEdgeBlob(textChunks, currentIndex, sessionId);
+        const blobPromise = this._getBlobForChunk(textChunks, currentIndex, sessionId);
+        let blob = blobPromise ? await blobPromise : null;
 
         if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
-        if (!blob) return;
 
-        // Decode MP3 blob into AudioBuffer (refetch if decode fails)
-        let audioBuffer;
-        let decodeFails = 0;
-        while (!this._stopped && (!sessionId || sessionId === this.currentSessionId)) {
-          try {
-            const ab = await blob.arrayBuffer();
-            audioBuffer = await ctx.decodeAudioData(ab);
-            break;
-          } catch (err) {
-            decodeFails++;
-            console.warn('[TTS] AudioContext decode failed for chunk', currentIndex, err?.message);
-            if (decodeFails > 8) {
-              console.error('[TTS] Decode failed too many times; stopping this session.');
-              return;
-            }
-            this._blobCache.delete(currentIndex);
-            blob = await this._awaitValidEdgeBlob(textChunks, currentIndex, sessionId);
-            if (!blob) return;
+        if (!blob || blob.size < 100) {
+          console.log(`[TTS] Edge TTS not ready for chunk ${currentIndex}, using Web Speech`);
+          this._failureCount++;
+          nextStartTime = null;
+          await this._speakWebSpeechChunk(chunk);
+
+          if (this._failureCount >= 1) {
+            console.warn('[TTS] Edge TTS unavailable. Switching to Web Speech for remainder.');
+            const originalEngine = this.engine;
+            this.engine = 'web-speech';
+            await this.speakContinuous(textChunks.slice(currentIndex + 1), (done) => {
+              onChunkComplete?.(currentIndex + 1 + done, textChunks.length);
+            }, sessionId);
+            this.engine = originalEngine;
+            return;
           }
+
+          this._blobCache.delete(currentIndex);
+          currentIndex++;
+          return runLoop();
         }
-        if (!audioBuffer) return;
+
+        // Decode MP3 blob into AudioBuffer
+        let audioBuffer;
+        try {
+          const ab = await blob.arrayBuffer();
+          audioBuffer = await ctx.decodeAudioData(ab);
+        } catch (err) {
+          console.warn('[TTS] AudioContext decode failed for chunk', currentIndex, err?.message);
+          await this._speakWebSpeechChunk(chunk);
+          this._blobCache.delete(currentIndex);
+          currentIndex++;
+          return runLoop();
+        }
 
         if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
 
@@ -382,8 +358,8 @@ class TTSManager {
         source.start(startAt);
         nextStartTime = startAt + audioBuffer.duration;
 
+        this._failureCount = 0;
         console.log(`[TTS] Audio ready for chunk ${currentIndex}, scheduled in ${(startAt - now).toFixed(2)}s (duration=${audioBuffer.duration.toFixed(2)}s)`);
-        onChunkStart?.(currentIndex, chunk);
         onChunkComplete?.(currentIndex + 1, textChunks.length);
 
         await new Promise(r => { source.onended = r; });
@@ -406,9 +382,27 @@ class TTSManager {
 
     window.speechSynthesis.cancel();
 
-    // Queue one chunk at a time so stop() + cancel() reliably halts playback (no huge backlog).
-    return (async () => {
+    return new Promise((resolve) => {
+      let totalQueued = 0;
       let completed = 0;
+
+      const keepAlive = setInterval(() => {
+        if (this._stopped || (sessionId && this.currentSessionId !== sessionId) || completed >= totalQueued) {
+          clearInterval(keepAlive);
+          return;
+        }
+        if (window.speechSynthesis.speaking && !this.isPaused) {
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        }
+      }, 10000);
+
+      const finish = () => {
+        clearInterval(keepAlive);
+        this.currentUtterance = null;
+        resolve();
+      };
+
       for (let i = 0; i < textChunks.length; i++) {
         if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) break;
 
@@ -416,36 +410,31 @@ class TTSManager {
         if (!chunk) continue;
         if (chunk.length > 2000) chunk = chunk.substring(0, 2000);
 
-        await new Promise((resolve) => {
-          if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) {
-            resolve();
-            return;
-          }
-          const u = this._createUtterance(chunk);
-          this.currentUtterance = u;
-          u.onstart = () => {
-            onChunkStart?.(i, chunk);
-          };
-          u.onend = () => {
-            completed++;
-            onChunkComplete?.(completed, textChunks.length);
-            this.currentUtterance = null;
-            resolve();
-          };
-          u.onerror = () => {
-            this.currentUtterance = null;
-            resolve();
-          };
-          window.speechSynthesis.speak(u);
-        });
+        const u = this._createUtterance(chunk);
+        totalQueued++;
+
+        u.onend = () => {
+          completed++;
+          onChunkComplete?.(completed, textChunks.length);
+          if (completed >= totalQueued) finish();
+        };
+        u.onerror = () => {
+          completed++;
+          if (completed >= totalQueued) finish();
+        };
+
+        window.speechSynthesis.speak(u);
+        this.currentUtterance = u;
       }
-      this.currentUtterance = null;
-    })();
+
+      if (totalQueued === 0) finish();
+    });
   }
 
   startSession() {
     this._stopped = false;
     this.isPaused = false;
+    this._failureCount = 0;
     this._cleanupCache();
   }
 
@@ -466,8 +455,6 @@ class TTSManager {
   stop() {
     this._stopped = true;
     this.isPaused = false;
-    // Invalidate session so in-flight speakContinuous loops exit immediately
-    this.currentSessionId = null;
     // Stop any currently-playing Web Audio source
     try { this._currentSource?.stop(0); } catch {
       // Source may already be stopped/disposed.
@@ -478,22 +465,7 @@ class TTSManager {
       this._currentAudio.src = '';
       this._currentAudio = null;
     }
-    const syn = window.speechSynthesis;
-    if (syn) {
-      syn.cancel();
-      // Second tick + empty utterance helps Chrome flush stuck queues after cancel()
-      setTimeout(() => {
-        try {
-          syn.cancel();
-          const flush = new SpeechSynthesisUtterance('');
-          flush.volume = 0;
-          syn.speak(flush);
-          syn.cancel();
-        } catch {
-          /* ignore */
-        }
-      }, 0);
-    }
+    window.speechSynthesis?.cancel?.();
     this.currentUtterance = null;
     this._cleanupCache();
   }

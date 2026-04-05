@@ -6,12 +6,6 @@ import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ttsManager } from '../lib/ttsManager';
 import { sanitizeTextForTTS, splitIntoSentenceChunks } from '../lib/textSanitation';
 import {
-  applyPdfTtsHighlight,
-  applyEpubTtsHighlight,
-  clearPdfTtsHighlight,
-  clearEpubTtsHighlight,
-} from '../lib/ttsHighlight';
-import {
   extractTextFromSection,
   extractTextFromPdfDoc,
   extractTextFromPdfDocRange,
@@ -22,9 +16,6 @@ import { ocrPdfPage, terminateOcr } from '../lib/ocr';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
-
-/** Epub.js SVG highlights often mis-render; highlights stay in the sidebar list only. */
-const EPUB_RENDER_ANNOTATION_HIGHLIGHTS = false;
 import { updateBookProgress, downloadBookFile } from '../lib/api';
 import { getSettings, getPdfOffset, setPdfOffset } from '../lib/settings';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
@@ -86,29 +77,7 @@ function Reader({ bookData, onBack, addToast }) {
   const fontSizeRef = useRef(null);
   const selectedCfiRangeRef = useRef(null);
   const epubResizeObserverRef = useRef(null);
-  const ttsPdfHighlightFromRef = useRef(0);
-  const ttsEpubHighlightFromRef = useRef(0);
-  /** Scrollable column for PDF — preserve scroll when TTS updates highlights / progress re-renders */
-  const pdfScrollContainerRef = useRef(null);
-  const ttsPlaybackProgressLastMsRef = useRef(0);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
-
-  const clearTtsDomHighlights = () => {
-    clearPdfTtsHighlight(pdfTextLayerRef.current);
-    try {
-      const iframe = viewerRef.current?.querySelector?.('iframe');
-      clearEpubTtsHighlight(iframe?.contentDocument);
-    } catch {
-      /* ignore */
-    }
-  };
-  /** Latest progress for flush on tab close / reader exit */
-  const lastProgressRef = useRef({ bookId: null, cfi: null, progressPercent: null, totalPages: null });
-
-  const persistBookProgress = (bookId, cfi, progressPercent, totalPages) => {
-    lastProgressRef.current = { bookId, cfi, progressPercent, totalPages };
-    return updateBookProgress(bookId, cfi, progressPercent, totalPages).catch(() => {});
-  };
 
   const settings = getSettings();
   const readerFontSize = settings.fontSize ?? 16;
@@ -158,46 +127,15 @@ function Reader({ bookData, onBack, addToast }) {
   }, [bookData?.format, pdfText, isPlayingTTS]);
 
   useEffect(() => {
-    if (!bookData?.id) return;
-    let cancelled = false;
-    void (async () => {
-      const [bm, hl] = await Promise.all([getBookmarks(bookData.id), getHighlights(bookData.id)]);
-      if (!cancelled) {
-        setBookmarks(bm);
-        setHighlights(hl);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    if (bookData?.id) {
+      setBookmarks(getBookmarks(bookData.id));
+      setHighlights(getHighlights(bookData.id));
+    }
   }, [bookData?.id]);
 
   useEffect(() => {
     currentPageRef.current = currentPage;
   }, [currentPage]);
-
-  useEffect(() => {
-    const flush = () => {
-      const p = lastProgressRef.current;
-      if (!p.bookId) return;
-      updateBookProgress(p.bookId, p.cfi, p.progressPercent, p.totalPages).catch(() => {});
-    };
-    const onVis = () => {
-      if (document.visibilityState === 'hidden') flush();
-    };
-    const onGlobalStop = () => {
-      playbackSessionRef.current = 0;
-    };
-    window.addEventListener('pagehide', flush);
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('audire-tts-global-stop', onGlobalStop);
-    return () => {
-      window.removeEventListener('pagehide', flush);
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('audire-tts-global-stop', onGlobalStop);
-      flush();
-    };
-  }, []);
 
   useEffect(() => {
     const s = getSettings();
@@ -304,23 +242,19 @@ function Reader({ bookData, onBack, addToast }) {
             };
             doc.addEventListener('selectionchange', notifySelection);
 
-            if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
-              void (async () => {
-                const bookHighlights = await getHighlights(bookData.id);
-                bookHighlights.forEach((h) => {
-                  try {
-                    const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
-                    rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
-                      fill: colorInfo.color,
-                      'fill-opacity': '0.4',
-                      'mix-blend-mode': 'multiply',
-                    });
-                  } catch {
-                    // CFI may be in different section.
-                  }
+            const bookHighlights = getHighlights(bookData.id);
+            bookHighlights.forEach((h) => {
+              try {
+                const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
+                rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
+                  fill: colorInfo.color,
+                  'fill-opacity': '0.4',
+                  'mix-blend-mode': 'multiply',
                 });
-              })();
-            }
+              } catch {
+                // CFI may be in different section.
+              }
+            });
 
             const style = doc.createElement('style');
             if (settings.theme === 'dark') {
@@ -383,7 +317,7 @@ function Reader({ bookData, onBack, addToast }) {
             const pct = book.locations?.percentageFromCfi?.(location.start.cfi) ?? 0;
             const percent = pct * 100;
             setProgress(percent);
-            persistBookProgress(bookData.id, location.start.cfi, percent);
+            updateBookProgress(bookData.id, location.start.cfi, percent).catch(() => {});
             setPlaybackProgress(percent);
           });
         } catch (err) {
@@ -482,7 +416,7 @@ function Reader({ bookData, onBack, addToast }) {
     }
     const pct = (contentPageNum / contentTotal) * 100;
     setProgress(pct);
-    persistBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages);
+    updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
     if (pdfCanvasRef.current) await renderPdfPage(phys);
   };
 
@@ -610,7 +544,6 @@ function Reader({ bookData, onBack, addToast }) {
     setIsPlayingTTS(true);
     setIsTTSLoading(true);
     play(bookData);
-    clearTtsDomHighlights();
 
     try {
       if (bookData.format === 'epub') {
@@ -777,7 +710,7 @@ function Reader({ bookData, onBack, addToast }) {
             const ct = Math.max(1, pdfRef.current.numPages - pdfPageOffset);
             const pct = (playbackPdfPage / ct) * 100;
             setProgress(pct);
-            persistBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages);
+            updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
           }
           if (!chunks?.length) {
             if (skipped >= MAX_SKIP_PAGES) {
@@ -807,61 +740,16 @@ function Reader({ bookData, onBack, addToast }) {
           console.log(`Reader: Sending ${chunks.length} chunks to TTS engine`);
           let firstChunkSignalled = !isEdgeTTS;
 
-          ttsPdfHighlightFromRef.current = 0;
-          ttsEpubHighlightFromRef.current = 0;
-          ttsPlaybackProgressLastMsRef.current = 0;
-
-          await ttsManager.speakContinuous(
-            chunks,
-            (done, total) => {
-              if (!firstChunkSignalled) {
-                firstChunkSignalled = true;
-                setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
-              }
-              if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
-                const ct = Math.max(1, totalPages - pdfPageOffset);
-                const pct = ((playbackPdfPage - 1 + (done / total)) / ct) * 100;
-                const now = Date.now();
-                const throttleMs = 400;
-                if (
-                  done === 1 ||
-                  done === total ||
-                  now - ttsPlaybackProgressLastMsRef.current >= throttleMs
-                ) {
-                  ttsPlaybackProgressLastMsRef.current = now;
-                  setPlaybackProgress(pct);
-                }
-              }
-            },
-            sessionId,
-            (chunkIndex, chunkText) => {
-              if (sessionId !== playbackSessionRef.current || !chunkText) return;
-              if (bookData.format === 'pdf') {
-                const run = () => {
-                  applyPdfTtsHighlight(
-                    pdfTextLayerRef.current,
-                    chunkText,
-                    ttsPdfHighlightFromRef,
-                    pdfScrollContainerRef.current,
-                    pdfText || '',
-                  );
-                };
-                requestAnimationFrame(run);
-              } else if (bookData.format === 'epub') {
-                try {
-                  const iframe = viewerRef.current?.querySelector?.('iframe');
-                  const doc = iframe?.contentDocument;
-                  if (doc) {
-                    requestAnimationFrame(() => {
-                      applyEpubTtsHighlight(doc, chunkText, ttsEpubHighlightFromRef);
-                    });
-                  }
-                } catch {
-                  /* ignore */
-                }
-              }
-            },
-          );
+          await ttsManager.speakContinuous(chunks, (done, total) => {
+            if (!firstChunkSignalled) {
+              firstChunkSignalled = true;
+              setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
+            }
+            if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
+              const ct = Math.max(1, totalPages - pdfPageOffset);
+              setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
+            }
+          }, sessionId);
 
           if (!firstChunkSignalled) setIsTTSLoading(false); // fallback: all chunks were skipped
         }
@@ -926,9 +814,6 @@ function Reader({ bookData, onBack, addToast }) {
           ttsManager.stop();
         }
       }
-      if (!ttsManager.isPaused) {
-        clearTtsDomHighlights();
-      }
     }
   };
 
@@ -943,7 +828,6 @@ function Reader({ bookData, onBack, addToast }) {
       setIsPlayingTTS(false);
       setIsTTSLoading(false);
       pause();
-      clearTtsDomHighlights();
     }
   };
 
@@ -1057,65 +941,61 @@ function Reader({ bookData, onBack, addToast }) {
     };
   }, [bookData?.id, totalPages, currentPage, pdfPageOffset, isPlayingTTS]);
 
-  const handleAddBookmark = async () => {
+  const handleAddBookmark = () => {
     if (bookData.format === 'epub') {
       const loc = renditionRef.current?.currentLocation();
       if (loc) {
         const doc = bookRef.current?.spine?.get(loc.start.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 100) || '';
-        await addBookmark(bookData.id, { cfi: loc.start.cfi, text });
-        setBookmarks(await getBookmarks(bookData.id));
+        addBookmark(bookData.id, { cfi: loc.start.cfi, text });
+        setBookmarks(getBookmarks(bookData.id));
       }
     } else {
-      await addBookmark(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: pdfText?.slice(0, 100) || '' });
-      setBookmarks(await getBookmarks(bookData.id));
+      addBookmark(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: pdfText?.slice(0, 100) || '' });
+      setBookmarks(getBookmarks(bookData.id));
     }
   };
 
-  const handleAddHighlight = async () => {
+  const handleAddHighlight = () => {
     if (bookData.format === 'epub') {
       const cfiRange = selectedCfiRangeRef.current;
       const loc = renditionRef.current?.currentLocation?.();
       const cfi = cfiRange || loc?.start?.cfi;
       if (cfi && selectedText) {
-        await addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
-        setHighlights(await getHighlights(bookData.id));
-        if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
-          try {
-            const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-            renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
-              fill: colorInfo.color,
-              'fill-opacity': '0.4',
-              'mix-blend-mode': 'multiply',
-            });
-          } catch {
-            // Annotation may fail for some CFIs.
-          }
+        addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
+        setHighlights(getHighlights(bookData.id));
+        try {
+          const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
+          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+            fill: colorInfo.color,
+            'fill-opacity': '0.4',
+            'mix-blend-mode': 'multiply',
+          });
+        } catch {
+          // Annotation may fail for some CFIs.
         }
       } else if (cfi) {
         const doc = bookRef.current?.spine?.get(loc?.start?.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 200) || selectedText || '';
-        await addHighlight(bookData.id, { cfi, text, color: highlightColor });
-        setHighlights(await getHighlights(bookData.id));
-        if (EPUB_RENDER_ANNOTATION_HIGHLIGHTS) {
-          try {
-            const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-            renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
-              fill: colorInfo.color,
-              'fill-opacity': '0.4',
-              'mix-blend-mode': 'multiply',
-            });
-          } catch {
-            // Ignore fallback annotation failures.
-          }
+        addHighlight(bookData.id, { cfi, text, color: highlightColor });
+        setHighlights(getHighlights(bookData.id));
+        try {
+          const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
+          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+            fill: colorInfo.color,
+            'fill-opacity': '0.4',
+            'mix-blend-mode': 'multiply',
+          });
+        } catch {
+          // Ignore fallback annotation failures.
         }
       } else {
         addToast?.('Select text first, then click the highlighter.', 'info');
       }
     } else {
       if (selectedText) {
-        await addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
-        setHighlights(await getHighlights(bookData.id));
+        addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
+        setHighlights(getHighlights(bookData.id));
       } else {
         addToast?.('Select text in the PDF first. If selection doesn\'t work, try a different PDF or use EPUB for full highlighting.', 'info');
       }
@@ -1367,9 +1247,9 @@ function Reader({ bookData, onBack, addToast }) {
                   <button onClick={() => handleGotoBookmark(bm)}>{bm.text || 'Bookmark'}</button>
                   <button
                     className="remove"
-                    onClick={async () => {
-                      await removeBookmark(bookData.id, bm.id);
-                      setBookmarks(await getBookmarks(bookData.id));
+                    onClick={() => {
+                      removeBookmark(bookData.id, bm.id);
+                      setBookmarks(getBookmarks(bookData.id));
                     }}
                   >
                     <X size={14} />
@@ -1421,7 +1301,7 @@ function Reader({ bookData, onBack, addToast }) {
                     </button>
                     <button
                       className="remove"
-                      onClick={async () => {
+                      onClick={() => {
                         if (bookData.format === 'epub') {
                           try {
                             renditionRef.current?.annotations?.remove?.(h.cfi, 'highlight');
@@ -1429,8 +1309,8 @@ function Reader({ bookData, onBack, addToast }) {
                             // Ignore scroll-sync edge cases during selection.
                           }
                         }
-                        await removeHighlight(bookData.id, h.id);
-                        setHighlights(await getHighlights(bookData.id));
+                        removeHighlight(bookData.id, h.id);
+                        setHighlights(getHighlights(bookData.id));
                       }}
                       title="Delete highlight"
                     >
@@ -1489,7 +1369,7 @@ function Reader({ bookData, onBack, addToast }) {
             {bookData.format === 'epub' ? (
               <div ref={viewerRef} className="epub-viewer" />
             ) : (
-              <div className="pdf-viewer-content" ref={pdfScrollContainerRef}>
+              <div className="pdf-viewer-content">
                 <div className="pdf-page-row">
                   <form className="pdf-page-indicator" onSubmit={handlePageInputSubmit}>
                     <span className="pdf-page-label">Page</span>

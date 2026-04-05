@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, Pencil } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
-import { fetchBooks, uploadBook, deleteBook, repairBookCover, importOrphanBook, updateBookMetadata } from '../lib/api';
-import { getCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
-import { migrateLegacyLibraryDataIfNeeded } from '../lib/librarySyncMigration';
+import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
+import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
@@ -22,21 +21,6 @@ const SORT_OPTIONS = [
   { id: 'progress_percent', label: 'Progress' },
   { id: 'last_read', label: 'Last read' },
 ];
-
-/** Server sends snake_case; some proxies may use camelCase */
-function getLastReadTimeMs(book) {
-  const raw = book?.last_read ?? book?.lastRead;
-  if (!raw) return null;
-  const t = new Date(raw).getTime();
-  return Number.isFinite(t) ? t : null;
-}
-
-function getAddedAtTimeMs(book) {
-  const raw = book?.added_at ?? book?.addedAt;
-  if (!raw) return 0;
-  const t = new Date(raw).getTime();
-  return Number.isFinite(t) ? t : 0;
-}
 
 function toUploadErrorMessage(fileName, err) {
   const raw = String(err?.message || 'Upload failed');
@@ -66,9 +50,6 @@ function Dashboard({ onBackToLanding }) {
   const [toasts, setToasts] = useState([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [showCollectionMenu, setShowCollectionMenu] = useState(null);
-  const [renameBookId, setRenameBookId] = useState(null);
-  const [renameTitle, setRenameTitle] = useState('');
-  const [renameAuthor, setRenameAuthor] = useState('');
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [librarySort, setLibrarySort] = useState(() => getSettings().librarySort || 'last_read');
   const [librarySortOrder, setLibrarySortOrder] = useState(() => getSettings().librarySortOrder || 'desc');
@@ -117,22 +98,9 @@ function Dashboard({ onBackToLanding }) {
   };
 
   useEffect(() => {
-    void (async () => {
-      await loadBooks();
-      await migrateLegacyLibraryDataIfNeeded();
-      setCollections(await getCollections());
-    })();
+    loadBooks();
+    setCollections(getCollections());
   }, []);
-
-  useEffect(() => {
-    if (selectedBook?.id) {
-      try {
-        localStorage.setItem('audire-last-open-book', selectedBook.id);
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [selectedBook?.id]);
 
   const loadBooks = async () => {
     setIsLoading(true);
@@ -152,18 +120,6 @@ function Dashboard({ onBackToLanding }) {
       setIsLoading(false);
     }
   };
-
-  const hadReaderOpenRef = useRef(false);
-  useEffect(() => {
-    if (selectedBook) {
-      hadReaderOpenRef.current = true;
-      return;
-    }
-    if (hadReaderOpenRef.current) {
-      hadReaderOpenRef.current = false;
-      void loadBooks();
-    }
-  }, [selectedBook]);
 
   const MAX_ATTEMPT_SIZE = 100 * 1024 * 1024; // 100 MB - won't try to compress larger (memory risk)
 
@@ -198,55 +154,26 @@ function Dashboard({ onBackToLanding }) {
 
         const uploaded = await uploadBook(uploadBlob, file.name);
         addToast(`"${uploaded.title}" added to library`, 'success');
-        setSearchQuery('');
-        setActiveTab('library');
-        setBooks((prev) => [uploaded, ...prev.filter((b) => b.id !== uploaded.id)]);
       } catch (err) {
         console.error(`Upload error for ${file.name}:`, err);
         addToast(toUploadErrorMessage(file.name, err), 'error');
       }
     }
 
-    // Don't refetch after upload - setBooks already added the book; loadBooks would overwrite
-    // and can drop the new book if GET /api/books filters it out (e.g. bookFileExists check).
+    await loadBooks();
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const openRenameModal = (book, e) => {
-    e?.stopPropagation();
-    setRenameTitle(book.title || '');
-    setRenameAuthor(book.author || '');
-    setRenameBookId(book.id);
-    setShowDeleteConfirm(null);
-    setShowCollectionMenu(null);
-  };
-
-  const handleSaveRename = async () => {
-    const book = books.find((b) => b.id === renameBookId);
-    if (!book) return;
-    const t = renameTitle.trim();
-    if (!t) {
-      addToast('Title is required', 'error');
-      return;
-    }
-    try {
-      const updated = await updateBookMetadata(book.id, {
-        title: t,
-        author: renameAuthor.trim() === '' ? null : renameAuthor.trim(),
-      });
-      setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, ...updated } : b)));
-      setSelectedBook((prev) => (prev?.id === book.id ? { ...prev, ...updated } : prev));
-      setRenameBookId(null);
-      addToast('Book details updated', 'success');
-    } catch (err) {
-      addToast(err?.message || 'Could not update book', 'error');
-    }
   };
 
   const handleDelete = async (book) => {
     try {
       await deleteBook(book.id);
+      const nextCollections = getCollections().map((c) => ({
+        ...c,
+        bookIds: c.bookIds.filter((id) => id !== book.id),
+      }));
+      saveCollections(nextCollections);
+      setCollections(nextCollections);
       setSelectedCollection((prev) => {
         if (!prev) return prev;
         return {
@@ -256,7 +183,6 @@ function Dashboard({ onBackToLanding }) {
       });
       addToast(`"${book.title}" removed`, 'success');
       await loadBooks();
-      setCollections(await getCollections());
       setShowDeleteConfirm(null);
     } catch {
       addToast('Could not delete book', 'error');
@@ -275,13 +201,6 @@ function Dashboard({ onBackToLanding }) {
 
   const collectedBookIds = new Set(collections.flatMap(c => c.bookIds));
 
-  let lastOpenedId = null;
-  try {
-    lastOpenedId = localStorage.getItem('audire-last-open-book');
-  } catch {
-    lastOpenedId = null;
-  }
-
   const filteredBooks = books
     .filter(
       (b) => {
@@ -298,37 +217,6 @@ function Dashboard({ onBackToLanding }) {
       const order = librarySortOrder;
       const mult = order === 'asc' ? 1 : -1;
 
-      // Pin last-opened book to top when sorting by "Last read" (desc)
-      if (sortBy === 'last_read' && order === 'desc' && lastOpenedId) {
-        const aPin = String(a.id) === String(lastOpenedId);
-        const bPin = String(b.id) === String(lastOpenedId);
-        if (aPin && !bPin) return -1;
-        if (!aPin && bPin) return 1;
-      }
-
-      const tiebreaker = typeof a.id === 'string' ? (a.id || '').localeCompare(b.id || '') : ((a.id || 0) - (b.id || 0));
-
-      if (sortBy === 'last_read') {
-        const ta = getLastReadTimeMs(a);
-        const tb = getLastReadTimeMs(b);
-        const aa = getAddedAtTimeMs(a);
-        const ab = getAddedAtTimeMs(b);
-        const aHas = ta != null;
-        const bHas = tb != null;
-        let cmp = 0;
-        if (aHas && bHas) {
-          cmp = order === 'asc' ? ta - tb : tb - ta;
-        } else if (aHas && !bHas) {
-          cmp = -1;
-        } else if (!aHas && bHas) {
-          cmp = 1;
-        } else {
-          cmp = order === 'asc' ? aa - ab : ab - aa;
-        }
-        if (cmp !== 0) return cmp;
-        return tiebreaker;
-      }
-
       let cmp = 0;
       if (sortBy === 'title') {
         cmp = (a.title || '').localeCompare(b.title || '');
@@ -338,7 +226,10 @@ function Dashboard({ onBackToLanding }) {
         cmp = new Date(a.added_at || 0) - new Date(b.added_at || 0);
       } else if (sortBy === 'progress_percent') {
         cmp = (getProgressPercent(a) || 0) - (getProgressPercent(b) || 0);
+      } else {
+        cmp = new Date(a.last_read || 0) - new Date(b.last_read || 0);
       }
+      const tiebreaker = typeof a.id === 'string' ? (a.id || '').localeCompare(b.id || '') : ((a.id || 0) - (b.id || 0));
       return mult * (cmp || tiebreaker);
     });
 
@@ -449,20 +340,11 @@ function Dashboard({ onBackToLanding }) {
               </div>
               <div className="dashboard-sort">
                 <select
-                  className="dashboard-sort-select"
                   value={librarySort}
-                  aria-label="Sort books by"
-                  title="Sort books by"
                   onChange={(e) => {
                     const v = e.target.value;
                     setLibrarySort(v);
-                    const s = getSettings();
-                    const next = { ...s, librarySort: v };
-                    if (v === 'last_read') {
-                      next.librarySortOrder = 'desc';
-                      setLibrarySortOrder('desc');
-                    }
-                    saveSettings(next);
+                    saveSettings({ ...getSettings(), librarySort: v });
                   }}
                 >
                   {SORT_OPTIONS.map((o) => (
@@ -470,20 +352,13 @@ function Dashboard({ onBackToLanding }) {
                   ))}
                 </select>
                 <button
-                  type="button"
                   className="dashboard-sort-order"
                   onClick={() => {
                     const v = librarySortOrder === 'asc' ? 'desc' : 'asc';
                     setLibrarySortOrder(v);
                     saveSettings({ ...getSettings(), librarySortOrder: v });
                   }}
-                  title={
-                    librarySort === 'last_read'
-                      ? (librarySortOrder === 'desc'
-                        ? 'Last read: newest first (click for oldest first)'
-                        : 'Last read: oldest first (click for newest first)')
-                      : (librarySortOrder === 'asc' ? 'Ascending' : 'Descending')
-                  }
+                  title={librarySortOrder === 'asc' ? 'Ascending' : 'Descending'}
                 >
                   {librarySortOrder === 'asc' ? '↑' : '↓'}
                 </button>
@@ -531,14 +406,6 @@ function Dashboard({ onBackToLanding }) {
                             <FileText size={40} color="var(--text-tertiary)" />
                           )}
                           <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
-                          <button
-                            type="button"
-                            className="dashboard-book-rename"
-                            onClick={(e) => openRenameModal(book, e)}
-                            title="Edit title"
-                          >
-                            <Pencil size={14} />
-                          </button>
                           <button
                             className="dashboard-book-delete"
                             onClick={(e) => {
@@ -617,11 +484,10 @@ function Dashboard({ onBackToLanding }) {
                       </div>
                       <button
                         className="danger-outline-btn"
-                        onClick={async () => {
+                        onClick={() => {
                           if (confirm(`Delete collection "${selectedCollection.name}"? Books will return to library.`)) {
-                            await removeCollection(selectedCollection.id);
+                            setCollections(removeCollection(selectedCollection.id));
                             setSelectedCollection(null);
-                            setCollections(await getCollections());
                           }
                         }}
                       >
@@ -663,24 +529,15 @@ function Dashboard({ onBackToLanding }) {
                               <button
                                 type="button"
                                 className="collection-book-action"
-                                onClick={(e) => openRenameModal(book, e)}
-                              >
-                                Rename
-                              </button>
-                              <button
-                                type="button"
-                                className="collection-book-action"
-                                onClick={async () => {
+                                onClick={() => {
                                   const ok = confirm(`Remove "${book.title}" from "${selectedCollection.name}"?`);
                                   if (!ok) return;
-                                  await removeBookFromCollection(selectedCollection.id, book.id);
-                                  const next = await getCollections();
-                                  setCollections(next);
-                                  setSelectedCollection(prev => {
-                                    if (!prev) return prev;
-                                    const col = next.find((x) => x.id === prev.id);
-                                    return col ? { ...col, bookIds: col.bookIds } : { ...prev, bookIds: prev.bookIds.filter((id) => id !== book.id) };
-                                  });
+                                  removeBookFromCollection(selectedCollection.id, book.id);
+                                  setCollections(getCollections());
+                                  setSelectedCollection(prev => ({
+                                    ...prev,
+                                    bookIds: prev.bookIds.filter(id => id !== book.id)
+                                  }));
                                 }}
                                 title="Remove from this collection"
                               >
@@ -705,11 +562,11 @@ function Dashboard({ onBackToLanding }) {
                     <p>No collections yet. Add books to collections from the library.</p>
                     <button
                       className="dashboard-empty-btn"
-                      onClick={async () => {
+                      onClick={() => {
                         const name = prompt('Collection name');
                         if (name) {
-                          await addCollection(name);
-                          setCollections(await getCollections());
+                          addCollection(name);
+                          setCollections(getCollections());
                         }
                       }}
                     >
@@ -736,12 +593,11 @@ function Dashboard({ onBackToLanding }) {
                             type="button"
                             className="dashboard-collection-delete"
                             title="Delete collection"
-                            onClick={async (e) => {
+                            onClick={(e) => {
                               e.stopPropagation();
                               if (confirm(`Delete collection "${c.name}"? Books will stay in your library.`)) {
-                                await removeCollection(c.id);
+                                setCollections(removeCollection(c.id));
                                 if (selectedCollection?.id === c.id) setSelectedCollection(null);
-                                setCollections(await getCollections());
                               }
                             }}
                           >
@@ -782,10 +638,10 @@ function Dashboard({ onBackToLanding }) {
                                     type="button"
                                     className="dashboard-collection-book-remove"
                                     title="Remove from collection"
-                                    onClick={async (e) => {
+                                    onClick={(e) => {
                                       e.stopPropagation();
-                                      await removeBookFromCollection(c.id, b.id);
-                                      setCollections(await getCollections());
+                                      removeBookFromCollection(c.id, b.id);
+                                      setCollections(getCollections());
                                     }}
                                   >
                                     <X size={12} />
@@ -809,7 +665,7 @@ function Dashboard({ onBackToLanding }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
               >
-                <SettingsPanel addToast={addToast} onBooksChange={loadBooks} />
+                <SettingsPanel addToast={addToast} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -871,10 +727,10 @@ function Dashboard({ onBackToLanding }) {
                     <button
                       key={c.id}
                       type="button"
-                      onClick={async () => {
-                        if (inCol) await removeBookFromCollection(c.id, book.id);
-                        else await addBookToCollection(c.id, book.id);
-                        setCollections(await getCollections());
+                      onClick={() => {
+                        if (inCol) removeBookFromCollection(c.id, book.id);
+                        else addBookToCollection(c.id, book.id);
+                        setCollections(getCollections());
                         setShowCollectionMenu(null);
                       }}
                     >
@@ -885,11 +741,11 @@ function Dashboard({ onBackToLanding }) {
                 <button
                   type="button"
                   className="collection-modal-new"
-                  onClick={async () => {
+                  onClick={() => {
                     const name = prompt('Collection name');
                     if (name) {
-                      await addCollection(name);
-                      setCollections(await getCollections());
+                      addCollection(name);
+                      setCollections(getCollections());
                     }
                   }}
                 >
@@ -901,107 +757,11 @@ function Dashboard({ onBackToLanding }) {
           document.body
         );
       })()}
-
-      {renameBookId && (() => {
-        const book = books.find((b) => b.id === renameBookId);
-        if (!book) return null;
-        return createPortal(
-          <div
-            className="delete-modal-overlay"
-            onClick={() => setRenameBookId(null)}
-            role="presentation"
-          >
-            <div
-              className="rename-modal"
-              onClick={(e) => e.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="rename-modal-title"
-            >
-              <h2 id="rename-modal-title" className="rename-modal-heading">Edit book</h2>
-              <div className="rename-modal-field">
-                <label htmlFor="rename-book-title">Title</label>
-                <input
-                  id="rename-book-title"
-                  type="text"
-                  value={renameTitle}
-                  onChange={(e) => setRenameTitle(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="rename-modal-field">
-                <label htmlFor="rename-book-author">Author</label>
-                <input
-                  id="rename-book-author"
-                  type="text"
-                  value={renameAuthor}
-                  onChange={(e) => setRenameAuthor(e.target.value)}
-                  placeholder="Optional"
-                  autoComplete="off"
-                />
-              </div>
-              <div className="delete-modal-actions">
-                <button type="button" onClick={() => setRenameBookId(null)}>Cancel</button>
-                <button type="button" onClick={() => void handleSaveRename()}>Save</button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        );
-      })()}
     </div>
   );
 }
 
-function ImportOrphanSection({ addToast, onImported }) {
-  const [bookId, setBookId] = useState('');
-  const [importing, setImporting] = useState(false);
-  const handleImport = async () => {
-    const id = bookId.trim();
-    if (!id) {
-      addToast('Enter the book ID (e.g. from Supabase filename)', 'error');
-      return;
-    }
-    setImporting(true);
-    try {
-      const book = await importOrphanBook(id);
-      addToast(`"${book.title}" added to library`, 'success');
-      setBookId('');
-      onImported?.();
-    } catch (err) {
-      addToast(err?.message || 'Import failed', 'error');
-    } finally {
-      setImporting(false);
-    }
-  };
-  return (
-    <div className="dashboard-settings-row" style={{ marginTop: 12 }}>
-      <label>Import orphaned book</label>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input
-          type="text"
-          placeholder="72c6a43c-3be2-412e-9a0f-45f96ad35dfb"
-          value={bookId}
-          onChange={(e) => setBookId(e.target.value)}
-          style={{ flex: 1, fontFamily: 'monospace' }}
-        />
-        <button
-          type="button"
-          onClick={handleImport}
-          disabled={importing}
-          className="dashboard-btn"
-        >
-          {importing ? 'Importing...' : 'Import'}
-        </button>
-      </div>
-      <p className="dashboard-settings-hint" style={{ marginTop: 4 }}>
-        If a book was uploaded to Supabase but not added to the library, paste its file ID here (the UUID from the filename, e.g. 72c6a43c-3be2-412e-9a0f-45f96ad35dfb).
-      </p>
-    </div>
-  );
-}
-
-function SettingsPanel({ addToast, onBooksChange }) {
+function SettingsPanel({ addToast }) {
   const [settings, setSettings] = useState(getSettings);
   const [voices, setVoices] = useState([]);
 
@@ -1135,7 +895,6 @@ function SettingsPanel({ addToast, onBooksChange }) {
       <div className="dashboard-settings-card">
         <h3>Storage</h3>
         <p>Books are stored in Supabase. Connect your project to sync across devices.</p>
-        <ImportOrphanSection addToast={addToast} onImported={onBooksChange} />
       </div>
     </div >
   );
