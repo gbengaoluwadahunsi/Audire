@@ -159,3 +159,37 @@ export async function aiVisualize(text) {
   return content ?? '';
 }
 
+/* ── Library Sync: Collections ── */
+
+export function isLibrarySyncConfigured() {
+  return !!BASE;
+}
+
+export async function librarySyncFetchCollections() {
+  return fetchJson('/api/library-sync/collections');
+}
+
+export async function librarySyncCreateCollection(name) {
+  return fetchJson('/api/library-sync/collections', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function librarySyncDeleteCollection(id) {
+  return fetchJson(`/api/library-sync/collections/${id}`, { method: 'DELETE' });
+}
+
+export async function librarySyncAddBookToCollection(collectionId, bookId) {
+  return fetchJson(`/api/library-sync/collections/${collectionId}/books`, {
+    method: 'POST',
+    body: JSON.stringify({ bookId }),
+  });
+}
+
+export async function librarySyncRemoveBookFromCollection(collectionId, bookId) {
+  return fetchJson(`/api/library-sync/collections/${collectionId}/books/${bookId}`, {
+    method: 'DELETE',
+  });
+}
+
