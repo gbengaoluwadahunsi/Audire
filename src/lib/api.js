@@ -193,3 +193,44 @@ export async function librarySyncRemoveBookFromCollection(collectionId, bookId) 
   });
 }
 
+/* ── Library Sync: Bookmarks ── */
+
+export async function librarySyncFetchBookmarks(bookId) {
+  return fetchJson(`/api/library-sync/bookmarks/${bookId}`);
+}
+
+export async function librarySyncCreateBookmark(bookId, cfi, text) {
+  return fetchJson(`/api/library-sync/bookmarks/${bookId}`, {
+    method: 'POST',
+    body: JSON.stringify({ cfi, text }),
+  });
+}
+
+export async function librarySyncDeleteBookmark(id) {
+  return fetchJson(`/api/library-sync/bookmarks/${id}`, { method: 'DELETE' });
+}
+
+/* ── Library Sync: Highlights ── */
+
+export async function librarySyncFetchHighlights(bookId) {
+  return fetchJson(`/api/library-sync/highlights/${bookId}`);
+}
+
+export async function librarySyncCreateHighlight(bookId, cfi, text, color) {
+  return fetchJson(`/api/library-sync/highlights/${bookId}`, {
+    method: 'POST',
+    body: JSON.stringify({ cfi, text, color }),
+  });
+}
+
+export async function librarySyncUpdateHighlightColor(id, color) {
+  return fetchJson(`/api/library-sync/highlights/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ color }),
+  });
+}
+
+export async function librarySyncDeleteHighlight(id) {
+  return fetchJson(`/api/library-sync/highlights/${id}`, { method: 'DELETE' });
+}
+
