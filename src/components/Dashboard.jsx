@@ -99,7 +99,7 @@ function Dashboard({ onBackToLanding }) {
 
   useEffect(() => {
     loadBooks();
-    setCollections(getCollections());
+    getCollections().then(setCollections);
   }, []);
 
   const loadBooks = async () => {
@@ -168,7 +168,8 @@ function Dashboard({ onBackToLanding }) {
   const handleDelete = async (book) => {
     try {
       await deleteBook(book.id);
-      const nextCollections = getCollections().map((c) => ({
+      const currentCollections = await getCollections();
+      const nextCollections = currentCollections.map((c) => ({
         ...c,
         bookIds: c.bookIds.filter((id) => id !== book.id),
       }));
@@ -484,9 +485,9 @@ function Dashboard({ onBackToLanding }) {
                       </div>
                       <button
                         className="danger-outline-btn"
-                        onClick={() => {
+                        onClick={async () => {
                           if (confirm(`Delete collection "${selectedCollection.name}"? Books will return to library.`)) {
-                            setCollections(removeCollection(selectedCollection.id));
+                            setCollections(await removeCollection(selectedCollection.id));
                             setSelectedCollection(null);
                           }
                         }}
@@ -529,11 +530,11 @@ function Dashboard({ onBackToLanding }) {
                               <button
                                 type="button"
                                 className="collection-book-action"
-                                onClick={() => {
+                                onClick={async () => {
                                   const ok = confirm(`Remove "${book.title}" from "${selectedCollection.name}"?`);
                                   if (!ok) return;
-                                  removeBookFromCollection(selectedCollection.id, book.id);
-                                  setCollections(getCollections());
+                                  await removeBookFromCollection(selectedCollection.id, book.id);
+                                  setCollections(await getCollections());
                                   setSelectedCollection(prev => ({
                                     ...prev,
                                     bookIds: prev.bookIds.filter(id => id !== book.id)
@@ -562,11 +563,11 @@ function Dashboard({ onBackToLanding }) {
                     <p>No collections yet. Add books to collections from the library.</p>
                     <button
                       className="dashboard-empty-btn"
-                      onClick={() => {
+                      onClick={async () => {
                         const name = prompt('Collection name');
                         if (name) {
-                          addCollection(name);
-                          setCollections(getCollections());
+                          await addCollection(name);
+                          setCollections(await getCollections());
                         }
                       }}
                     >
@@ -593,10 +594,10 @@ function Dashboard({ onBackToLanding }) {
                             type="button"
                             className="dashboard-collection-delete"
                             title="Delete collection"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
                               if (confirm(`Delete collection "${c.name}"? Books will stay in your library.`)) {
-                                setCollections(removeCollection(c.id));
+                                setCollections(await removeCollection(c.id));
                                 if (selectedCollection?.id === c.id) setSelectedCollection(null);
                               }
                             }}
@@ -638,10 +639,10 @@ function Dashboard({ onBackToLanding }) {
                                     type="button"
                                     className="dashboard-collection-book-remove"
                                     title="Remove from collection"
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                       e.stopPropagation();
-                                      removeBookFromCollection(c.id, b.id);
-                                      setCollections(getCollections());
+                                      await removeBookFromCollection(c.id, b.id);
+                                      setCollections(await getCollections());
                                     }}
                                   >
                                     <X size={12} />
@@ -727,10 +728,10 @@ function Dashboard({ onBackToLanding }) {
                     <button
                       key={c.id}
                       type="button"
-                      onClick={() => {
-                        if (inCol) removeBookFromCollection(c.id, book.id);
-                        else addBookToCollection(c.id, book.id);
-                        setCollections(getCollections());
+                      onClick={async () => {
+                        if (inCol) await removeBookFromCollection(c.id, book.id);
+                        else await addBookToCollection(c.id, book.id);
+                        setCollections(await getCollections());
                         setShowCollectionMenu(null);
                       }}
                     >
@@ -741,11 +742,11 @@ function Dashboard({ onBackToLanding }) {
                 <button
                   type="button"
                   className="collection-modal-new"
-                  onClick={() => {
+                  onClick={async () => {
                     const name = prompt('Collection name');
                     if (name) {
-                      addCollection(name);
-                      setCollections(getCollections());
+                      await addCollection(name);
+                      setCollections(await getCollections());
                     }
                   }}
                 >
