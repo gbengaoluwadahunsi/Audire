@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
 // Supabase is now fully removed, using Neon + Local Storage
 
