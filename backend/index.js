@@ -7,7 +7,6 @@ import booksRouter from './routes/books.js';
 import aiRouter from './routes/ai.js';
 import ttsRouter from './routes/tts.js';
 import librarySyncRouter from './routes/librarySync.js';
-import { isSupabaseEnabled } from './supabaseStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,8 +36,5 @@ app.listen(PORT, () => {
   }
   if (!process.env.GROQ_API_KEY) {
     console.warn('GROQ_API_KEY not set - AI features will fail');
-  }
-  if (isSupabaseEnabled()) {
-    console.log('Supabase Storage enabled - books will be stored in the cloud');
   }
 });

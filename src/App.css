@@ -2303,7 +2303,7 @@
   height: 100%;
   min-height: 400px;
   background: var(--reader-bg, #fafaf9);
-  font-size: var(--reader-font-size, 16px);
+  font-size: var(--reader-font-size, 15px);
   line-height: var(--reader-line-height, 1.6);
 }
 
@@ -2322,7 +2322,7 @@
   overflow-y: auto;
   color: var(--text-primary);
   line-height: var(--reader-line-height, 1.6);
-  font-size: var(--reader-font-size, 16px);
+  font-size: var(--reader-font-size, 15px);
   background: var(--bg-base);
   user-select: text;
   -webkit-user-select: text;

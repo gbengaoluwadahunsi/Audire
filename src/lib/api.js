@@ -1,5 +1,5 @@
 /**
- * Audire API client - replaces Supabase for books, progress, and TTS.
+ * Audire API client for books, progress, and TTS.
  * Backend runs on Render/Neon. Set VITE_API_URL in .env (e.g. http://localhost:3001 for dev).
  */
 

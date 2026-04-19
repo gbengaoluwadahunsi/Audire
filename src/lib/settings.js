@@ -1,11 +1,11 @@
 const STORAGE_KEY = 'audire-settings';
 
 const DEFAULTS = {
-  ttsEngine: 'web-speech',
+  ttsEngine: 'edge-tts',
   ttsVoice: '',
   edgeTtsVoice: 'en-US-AvaMultilingualNeural',
   speed: 1.0,
-  fontSize: 16,
+  fontSize: 15,
   lineHeight: 1.6,
   theme: 'dark',
   librarySort: 'last_read',

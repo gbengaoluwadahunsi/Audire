@@ -8,7 +8,7 @@ import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
 import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
-import { ttsManager, getVoices, sortVoicesNaturalFirst } from '../lib/ttsManager';
+import { ttsManager } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
 import Reader from './Reader';
 import MiniPlayer from './MiniPlayer';
@@ -76,7 +76,7 @@ function Dashboard({ onBackToLanding }) {
         }
         await new Promise((r) => setTimeout(r, 200));
       })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   const toggleTheme = () => {
@@ -764,97 +764,52 @@ function Dashboard({ onBackToLanding }) {
 
 function SettingsPanel({ addToast }) {
   const [settings, setSettings] = useState(getSettings);
-  const [voices, setVoices] = useState([]);
-
-  useEffect(() => {
-    const load = async () => {
-      const v = await getVoices();
-      setVoices(Array.isArray(v) ? v : window.speechSynthesis?.getVoices?.() ?? []);
-    };
-    load();
-    if (window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = load;
-    }
-  }, []);
 
   useEffect(() => {
     ttsManager.setSpeed(settings.speed);
-    ttsManager.setVoice(settings.ttsVoice);
-    ttsManager.setEngine(settings.ttsEngine);
     ttsManager.setEdgeTtsVoice(settings.edgeTtsVoice);
-  }, [settings.speed, settings.ttsVoice, settings.ttsEngine, settings.edgeTtsVoice]);
+  }, [settings.speed, settings.edgeTtsVoice]);
 
   const update = (key, value) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
     saveSettings(next);
     if (key === 'speed') ttsManager.setSpeed(value);
-    if (key === 'ttsVoice') ttsManager.setVoice(value);
-    if (key === 'ttsEngine') ttsManager.setEngine(value);
     if (key === 'edgeTtsVoice') ttsManager.setEdgeTtsVoice(value);
     addToast('Settings saved', 'success');
   };
 
-  let voiceList = voices.filter(v => v.lang?.startsWith('en'));
-  if (voiceList.length === 0 && voices.length > 0) {
-    voiceList = voices.slice(0, 20);
-  }
-  voiceList = sortVoicesNaturalFirst(voiceList);
 
   return (
     <div className="dashboard-settings">
       <div className="dashboard-settings-card">
         <h3>TTS Engine</h3>
         <p className="dashboard-settings-hint">
-          <strong>Edge TTS</strong> — High-quality neural voices powered by Microsoft Azure. Streams from server, no download needed. <strong>Web Speech</strong> — Uses browser built-in voices (Edge/Chrome have best quality).
+          <strong>Edge TTS</strong> — High-quality neural voices powered by Microsoft Azure. Streams from server, no download needed.
         </p>
         <select
-          value={settings.ttsEngine || 'web-speech'}
-          onChange={(e) => update('ttsEngine', e.target.value)}
+          value="edge-tts"
+          disabled
           className="dashboard-settings-select"
         >
-          <option value="web-speech">Web Speech (browser)</option>
           <option value="edge-tts">Edge TTS (neural)</option>
         </select>
       </div>
-      {(settings.ttsEngine || 'web-speech') === 'edge-tts' ? (
-        <>
-          <div className="dashboard-settings-card">
-            <h3>Edge TTS Voice</h3>
-            <p className="dashboard-settings-hint">
-              Neural voices from Microsoft Azure. Ava and Jenny are recommended.
-            </p>
-            <select
-              value={settings.edgeTtsVoice || 'en-US-AvaMultilingualNeural'}
-              onChange={(e) => update('edgeTtsVoice', e.target.value)}
-              className="dashboard-settings-select"
-            >
-              {EDGE_TTS_VOICES.map((v) => (
-                <option key={v.id} value={v.id}>{v.name} ({v.grade})</option>
-              ))}
-            </select>
-          </div>
-        </>
-      ) : (
-        <div className="dashboard-settings-card">
-          <h3>Voice (Web Speech)</h3>
-          <p className="dashboard-settings-hint">
-            For natural voices: use <strong>Microsoft Edge</strong> and pick a voice with &quot;Microsoft&quot; or &quot;Online&quot; in the name.
-          </p>
-          <select
-            value={settings.ttsVoice || ''}
-            onChange={(e) => update('ttsVoice', e.target.value)}
-            className="dashboard-settings-select"
-          >
-            <option value="">Default (browser)</option>
-            {voiceList.map((v) => (
-              <option key={v.voiceURI} value={v.voiceURI}>
-                {v.name} ({v.lang}){v.name?.toLowerCase().includes('microsoft') || v.name?.toLowerCase().includes('online') ? ' — natural' : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      <div className="dashboard-settings-card">
+        <h3>Edge TTS Voice</h3>
+        <p className="dashboard-settings-hint">
+          Neural voices from Microsoft Azure. Ava and Jenny are recommended.
+        </p>
+        <select
+          value={settings.edgeTtsVoice || 'en-US-AvaMultilingualNeural'}
+          onChange={(e) => update('edgeTtsVoice', e.target.value)}
+          className="dashboard-settings-select"
+        >
+          {EDGE_TTS_VOICES.map((v) => (
+            <option key={v.id} value={v.id}>{v.name} ({v.grade})</option>
+          ))}
+        </select>
+      </div>
       <div className="dashboard-settings-card">
         <h3>Playback speed</h3>
         <div className="dashboard-settings-speed">
@@ -878,7 +833,7 @@ function SettingsPanel({ addToast }) {
             min="12"
             max="24"
             value={settings.fontSize}
-            onChange={(e) => update('fontSize', parseInt(e.target.value) || 16)}
+            onChange={(e) => update('fontSize', parseInt(e.target.value) || 15)}
           />
         </div>
         <div className="dashboard-settings-row">
@@ -895,7 +850,7 @@ function SettingsPanel({ addToast }) {
       </div>
       <div className="dashboard-settings-card">
         <h3>Storage</h3>
-        <p>Books are stored in Supabase. Connect your project to sync across devices.</p>
+        <p>Books are stored in the cloud. Connect your project to sync across devices.</p>
       </div>
     </div >
   );

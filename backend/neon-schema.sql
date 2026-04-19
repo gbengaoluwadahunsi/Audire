@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS books (
   file_url text NOT NULL,
   format text DEFAULT 'epub',
   file_hash text,
+  file_data bytea,
+  cover_data bytea,
   added_at timestamptz DEFAULT now(),
   last_cfi text,
   last_read timestamptz,

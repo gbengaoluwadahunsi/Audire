@@ -8,10 +8,8 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
-import { convertEpubToPdf } from '../epubToPdf.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
+// Supabase is now fully removed, using Neon + Local Storage
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const BOOKS_DIR = path.join(UPLOAD_BASE, 'books');
@@ -88,7 +86,7 @@ function isRepairRateLimited(ip) {
 function enqueueRepairJob(job) {
   const run = repairQueue.then(() => job());
   // Keep queue alive even if one job fails.
-  repairQueue = run.catch(() => {});
+  repairQueue = run.catch(() => { });
   return run;
 }
 
@@ -152,14 +150,18 @@ router.post('/', upload.single('file'), async (req, res) => {
     const baseUrl = getBaseUrl(req);
     const { bookData, coverPath } = await processUpload(req.file.path, BOOKS_DIR, COVERS_DIR);
 
-    // Calculate file hash for duplicate detection using streaming (memory-efficient)
-    const fileHash = await new Promise((resolve, reject) => {
-      const hash = crypto.createHash('sha256');
-      const stream = createReadStream(req.file.path);
-      stream.on('data', (chunk) => hash.update(chunk));
-      stream.on('end', () => resolve(hash.digest('hex')));
-      stream.on('error', reject);
-    });
+    // Calculate file hash and prepare buffer for Neon storage
+    const fileBuffer = await fs.readFile(req.file.path);
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    let coverBuffer = null;
+    if (coverPath) {
+      try {
+        coverBuffer = await fs.readFile(coverPath);
+      } catch (e) {
+        console.warn('Could not read cover buffer for DB storage:', e.message);
+      }
+    }
 
     // Try to check for duplicates using file_hash (only works if column exists)
     try {
@@ -174,7 +176,7 @@ router.post('/', upload.single('file'), async (req, res) => {
         await query('DELETE FROM books WHERE id = $1', [existingBook.id]);
         // Also delete the associated book file if it exists
         const bookFilePath = path.join(BOOKS_DIR, `${existingBook.id}${bookData.format === 'pdf' ? '.pdf' : '.epub'}`);
-        await fs.unlink(bookFilePath).catch(() => {});
+        await fs.unlink(bookFilePath).catch(() => { });
       }
     } catch (hashErr) {
       // file_hash column doesn't exist yet - that's OK, duplicate detection will work once schema is updated
@@ -191,8 +193,25 @@ router.post('/', upload.single('file'), async (req, res) => {
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
 
-    // Try to INSERT with file_hash first, fall back without if column doesn't exist
+    // Try to INSERT with binary data
     try {
+      await query(
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+        [
+          bookData.id,
+          bookData.title,
+          bookData.author || null,
+          coverUrl,
+          fileUrl,
+          bookData.format || 'epub',
+          fileHash,
+          fileBuffer,
+          coverBuffer
+        ]
+      );
+    } catch (insertErr) {
+      // Fallback for older schemas without binary columns
       await query(
         `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
@@ -203,27 +222,9 @@ router.post('/', upload.single('file'), async (req, res) => {
           coverUrl,
           fileUrl,
           bookData.format || 'epub',
-          fileHash,
+          fileHash
         ]
       );
-    } catch (insertErr) {
-      // If file_hash column doesn't exist, retry without it
-      if (insertErr.code === '42703') {
-        await query(
-          `INSERT INTO books (id, title, author, cover, file_url, format, added_at)
-           VALUES ($1, $2, $3, $4, $5, $6, now())`,
-          [
-            bookData.id,
-            bookData.title,
-            bookData.author || null,
-            coverUrl,
-            fileUrl,
-            bookData.format || 'epub',
-          ]
-        );
-      } else {
-        throw insertErr;
-      }
     }
 
     const { rows } = await query('SELECT * FROM books WHERE id = $1', [bookData.id]);
@@ -274,8 +275,19 @@ router.get('/:id/pdf', async (req, res) => {
 
 router.get('/:id/file', async (req, res) => {
   try {
-    const { rows } = await query('SELECT format FROM books WHERE id = $1', [req.params.id]);
+    const { id } = req.params;
+    // 1. Try serving from Database first (New Neon Storage)
+    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1', [id]);
+    if (rows.length > 0 && rows[0].file_data) {
+      const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
+      const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
+      res.setHeader('Content-Type', contentType);
+      return res.send(rows[0].file_data);
+    }
+
     if (!rows.length) return res.status(404).send('Book not found');
+
+    // 2. Fallback to local disk
 
     const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
     const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
@@ -294,10 +306,19 @@ router.get('/:id/file', async (req, res) => {
 
 router.get('/:id/cover', async (req, res) => {
   try {
-    const id = req.params.id;
+    const { id } = req.params;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
       return res.status(400).json({ error: 'Invalid book ID' });
     }
+
+    // 1. Try serving from Database first (New Neon Storage)
+    const { rows } = await query('SELECT cover_data FROM books WHERE id = $1', [id]);
+    if (rows.length > 0 && rows[0].cover_data) {
+      res.setHeader('Content-Type', 'image/jpeg'); // Generic JPEG, browser sniff handles PNG etc
+      return res.send(rows[0].cover_data);
+    }
+
+    // 2. Fallback to local disk
     const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
     for (const ext of exts) {
       const coverPath = path.join(COVERS_DIR, `${id}${ext}`);
@@ -389,12 +410,12 @@ router.delete('/:id', async (req, res) => {
     if (rows.length) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
       const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
-      await fs.unlink(filePath).catch(() => {});
+      await fs.unlink(filePath).catch(() => { });
       if (rows[0].format === 'epub') {
-        await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}_converted.pdf`)).catch(() => {});
+        await fs.unlink(path.join(BOOKS_DIR, `${req.params.id}_converted.pdf`)).catch(() => { });
       }
       for (const e of ['.jpg', '.jpeg', '.png', '.gif', '.webp']) {
-        await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => {});
+        await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => { });
       }
     }
     await query('DELETE FROM books WHERE id = $1', [req.params.id]);

@@ -80,7 +80,7 @@ function Reader({ bookData, onBack, addToast }) {
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
 
   const settings = getSettings();
-  const readerFontSize = settings.fontSize ?? 16;
+  const readerFontSize = settings.fontSize ?? 15;
 
   useEffect(() => {
     const updateSelection = () => {
@@ -140,9 +140,7 @@ function Reader({ bookData, onBack, addToast }) {
   useEffect(() => {
     const s = getSettings();
     ttsManager.setSpeed(s.speed);
-    ttsManager.setVoice(s.ttsVoice);
     ttsManager.setEdgeTtsVoice(s.edgeTtsVoice);
-    ttsManager.setEngine(s.ttsEngine);
   }, []);
 
   useEffect(() => {
@@ -186,6 +184,14 @@ function Reader({ bookData, onBack, addToast }) {
       }, 80);
     };
     onResize();
+    const pool = new Pool({
+      connectionString: connStr || process.env.DATABASE_URL,
+      ssl: isNeon ? { rejectUnauthorized: false } : (connStr?.includes('sslmode=') ? { rejectUnauthorized: false } : false),
+      max: 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+      keepAlive: true,
+    });
     const ro = new ResizeObserver(onResize);
     ro.observe(container);
     return () => {
@@ -246,7 +252,7 @@ function Reader({ bookData, onBack, addToast }) {
             bookHighlights.forEach((h) => {
               try {
                 const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
-                rendition.annotations?.highlight?.(h.cfi, {}, () => {}, 'hl', {
+                rendition.annotations?.highlight?.(h.cfi, {}, () => { }, 'hl', {
                   fill: colorInfo.color,
                   'fill-opacity': '0.4',
                   'mix-blend-mode': 'multiply',
@@ -317,7 +323,7 @@ function Reader({ bookData, onBack, addToast }) {
             const pct = book.locations?.percentageFromCfi?.(location.start.cfi) ?? 0;
             const percent = pct * 100;
             setProgress(percent);
-            updateBookProgress(bookData.id, location.start.cfi, percent).catch(() => {});
+            updateBookProgress(bookData.id, location.start.cfi, percent).catch(() => { });
             setPlaybackProgress(percent);
           });
         } catch (err) {
@@ -416,7 +422,7 @@ function Reader({ bookData, onBack, addToast }) {
     }
     const pct = (contentPageNum / contentTotal) * 100;
     setProgress(pct);
-    updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
+    updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => { });
     if (pdfCanvasRef.current) await renderPdfPage(phys);
   };
 
@@ -448,7 +454,7 @@ function Reader({ bookData, onBack, addToast }) {
     const containerEl = pdfPageWrapperRef.current;
     const baseViewport = page.getViewport({ scale: 1 });
     const containerW = containerEl?.offsetWidth || 800;
-    const displayScale = containerW > 0 ? Math.min(2, Math.max(0.5, containerW / baseViewport.width)) : 1.5;
+    const displayScale = containerW > 0 ? Math.min(1.4, Math.max(0.5, containerW / baseViewport.width)) : 1.25;
     const viewport = page.getViewport({ scale: displayScale });
 
     const canvas = pdfCanvasRef.current;
@@ -710,7 +716,7 @@ function Reader({ bookData, onBack, addToast }) {
             const ct = Math.max(1, pdfRef.current.numPages - pdfPageOffset);
             const pct = (playbackPdfPage / ct) * 100;
             setProgress(pct);
-            updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => {});
+            updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => { });
           }
           if (!chunks?.length) {
             if (skipped >= MAX_SKIP_PAGES) {
@@ -966,7 +972,7 @@ function Reader({ bookData, onBack, addToast }) {
         setHighlights(getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => { }, 'hl', {
             fill: colorInfo.color,
             'fill-opacity': '0.4',
             'mix-blend-mode': 'multiply',
@@ -981,7 +987,7 @@ function Reader({ bookData, onBack, addToast }) {
         setHighlights(getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
-          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => {}, 'hl', {
+          renditionRef.current?.annotations?.highlight?.(cfi, {}, () => { }, 'hl', {
             fill: colorInfo.color,
             'fill-opacity': '0.4',
             'mix-blend-mode': 'multiply',
@@ -1439,9 +1445,9 @@ function Reader({ bookData, onBack, addToast }) {
                       style={
                         pdfViewport.width > 0
                           ? {
-                              width: `${pdfViewport.width}px`,
-                              height: `${pdfViewport.height}px`,
-                            }
+                            width: `${pdfViewport.width}px`,
+                            height: `${pdfViewport.height}px`,
+                          }
                           : undefined
                       }
                     >
