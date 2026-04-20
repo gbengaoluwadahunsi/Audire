@@ -1155,6 +1155,32 @@ function Reader({ bookData, onBack, addToast }) {
             <Layers size={18} />
           </button>
         </div>
+
+        <div className="playback-controls">
+          <button
+            className="play-btn-large"
+            onClick={handlePlayPause}
+            disabled={isTTSLoading}
+            title={isPlayingTTS ? "Pause TTS" : "Play TTS"}
+          >
+            {isTTSLoading ? (
+              <div className="small-loader" />
+            ) : isPlayingTTS ? (
+              <Pause size={18} fill="currentColor" />
+            ) : (
+              <Play size={18} fill="currentColor" />
+            )}
+          </button>
+          <div className="reader-continuous-inline">
+            <label title="Continuous TTS">
+              <input
+                type="checkbox"
+                checked={continuousMode}
+                onChange={(e) => { setContinuousMode(e.target.checked); continuousModeRef.current = e.target.checked; }}
+              /> Cont.
+            </label>
+          </div>
+        </div>
       </div>
 
       {showAIPanel && (
@@ -1468,45 +1494,6 @@ function Reader({ bookData, onBack, addToast }) {
             aria-label="Next page"
           >
             <ChevronRight size={24} />
-          </button>
-        </div>
-      </div>
-
-      <div className="reader-footer">
-        <label className="reader-continuous">
-          <input
-            type="checkbox"
-            checked={continuousMode}
-            onChange={(e) => { setContinuousMode(e.target.checked); continuousModeRef.current = e.target.checked; }}
-          />
-          Continuous TTS
-        </label>
-        <div className="playback-container">
-          <div className="playback-bar">
-            <div className="playback-progress" style={{ width: `${progress}%` }} />
-          </div>
-          <div className="playback-info">{Math.round(progress)}%</div>
-        </div>
-
-        <div className="playback-controls">
-          <button type="button" className="control-btn" onClick={prevPage}>
-            <ChevronLeft size={18} />
-          </button>
-          <button
-            className="play-btn-large"
-            onClick={handlePlayPause}
-            disabled={isTTSLoading}
-          >
-            {isTTSLoading ? (
-              <div className="small-loader" />
-            ) : isPlayingTTS ? (
-              <Pause size={22} fill="currentColor" />
-            ) : (
-              <Play size={22} fill="currentColor" />
-            )}
-          </button>
-          <button type="button" className="control-btn" onClick={nextPage}>
-            <ChevronRight size={18} />
           </button>
         </div>
       </div>

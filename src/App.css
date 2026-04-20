@@ -2535,15 +2535,7 @@
 }
 
 .reader-footer {
-  height: 70px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 0 24px;
-  gap: 6px;
-  flex-shrink: 0;
+  display: none !important;
 }
 
 .playback-container {
