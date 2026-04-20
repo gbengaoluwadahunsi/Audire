@@ -184,14 +184,6 @@ function Reader({ bookData, onBack, addToast }) {
       }, 80);
     };
     onResize();
-    const pool = new Pool({
-      connectionString: connStr || process.env.DATABASE_URL,
-      ssl: isNeon ? { rejectUnauthorized: false } : (connStr?.includes('sslmode=') ? { rejectUnauthorized: false } : false),
-      max: 10,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
-      keepAlive: true,
-    });
     const ro = new ResizeObserver(onResize);
     ro.observe(container);
     return () => {
