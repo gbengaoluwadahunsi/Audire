@@ -2213,11 +2213,11 @@
 }
 
 .reader-header {
-  height: 64px;
+  height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   flex-shrink: 0;
@@ -2233,15 +2233,15 @@
   background: transparent;
   color: var(--text-secondary);
   font-weight: 500;
-  font-size: 0.9rem;
-  padding: 6px 10px;
+  font-size: 0.85rem;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   transition: all 0.15s;
   flex-shrink: 0;
   position: relative;
   z-index: 2;
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 36px;
+  min-width: 36px;
   cursor: pointer;
 }
 
@@ -2312,7 +2312,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
+  padding: 8px 16px 0;
 }
 
 .pdf-viewer-content {
@@ -2334,9 +2335,9 @@
   gap: 6px;
   background: var(--surface);
   color: var(--text-secondary);
-  padding: 4px 12px;
+  padding: 2px 8px;
   border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   border: 1px solid var(--border);
 }
@@ -2534,14 +2535,14 @@
 }
 
 .reader-footer {
-  height: 100px;
+  height: 70px;
   border-top: 1px solid var(--border);
   background: var(--bg-elevated);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0 48px;
-  gap: 12px;
+  padding: 0 24px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -2587,8 +2588,8 @@
 }
 
 .play-btn-large {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: var(--primary);
   color: white;
@@ -2601,7 +2602,7 @@
 
 .play-btn-large:hover {
   background: var(--primary-light);
-  box-shadow: 0 0 20px var(--primary-glow);
+  box-shadow: 0 0 15px var(--primary-glow);
   transform: scale(1.05);
 }
 
@@ -2619,7 +2620,7 @@
 .control-btn {
   background: transparent;
   color: var(--text-secondary);
-  padding: 8px;
+  padding: 4px;
   border-radius: var(--radius-sm);
   transition: all 0.15s;
   display: flex;
