@@ -58,6 +58,10 @@ function rewriteLegacyLocalhostUrl(value, baseUrl) {
     .replace(/^http:\/\/127\.0\.0\.1:3001/i, baseUrl);
 }
 
+// IMPORTANT: Never use SELECT * on books table - the file_data/cover_data columns
+// contain entire book binaries and will cause OOM on memory-constrained servers.
+const BOOK_COLS = 'id, title, author, cover, file_url, format, file_hash, added_at, last_cfi, last_read, progress_percent, total_pages';
+
 function normalizeBookUrls(book, baseUrl) {
   if (!book) return book;
   return {
@@ -109,16 +113,9 @@ router.get('/', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const { rows } = await query(
-      'SELECT * FROM books ORDER BY added_at DESC'
+      `SELECT ${BOOK_COLS} FROM books ORDER BY added_at DESC`
     );
-    const withValidCovers = await Promise.all(rows.map(async (b) => {
-      if (b.cover && !(await coverFileExists(b.id))) {
-        await query('UPDATE books SET cover = NULL WHERE id = $1', [b.id]);
-        return normalizeBookUrls({ ...b, cover: null }, baseUrl);
-      }
-      return normalizeBookUrls(b, baseUrl);
-    }));
-    res.json(withValidCovers);
+    res.json(rows.map(b => normalizeBookUrls(b, baseUrl)));
   } catch (err) {
     console.error('Fetch books error:', err);
     res.status(500).json({ error: err.message });
@@ -128,7 +125,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
-    const { rows } = await query('SELECT * FROM books WHERE id = $1', [req.params.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     let book = rows[0];
     if (book.cover && !(await coverFileExists(book.id))) {
@@ -151,17 +148,24 @@ router.post('/', upload.single('file'), async (req, res) => {
     const baseUrl = getBaseUrl(req);
     const { bookData, coverPath } = await processUpload(req.file.path, BOOKS_DIR, COVERS_DIR);
 
-    // Calculate file hash and prepare buffer for Neon storage
-    const fileBuffer = await fs.readFile(req.file.path);
-    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    // Calculate file hash using streaming (memory-efficient)
+    const fileHash = await new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = createReadStream(req.file.path);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', () => resolve(hash.digest('hex')));
+      stream.on('error', reject);
+    });
 
+    // Read binary data for Neon storage (only if file is reasonably sized for DB)
+    const MAX_DB_FILE = 50 * 1024 * 1024; // 50MB limit for DB storage
+    let fileBuffer = null;
     let coverBuffer = null;
+    if (req.file.size <= MAX_DB_FILE) {
+      try { fileBuffer = await fs.readFile(req.file.path); } catch { }
+    }
     if (coverPath) {
-      try {
-        coverBuffer = await fs.readFile(coverPath);
-      } catch (e) {
-        console.warn('Could not read cover buffer for DB storage:', e.message);
-      }
+      try { coverBuffer = await fs.readFile(coverPath); } catch { }
     }
 
     // Try to check for duplicates using file_hash (only works if column exists)
@@ -228,7 +232,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       );
     }
 
-    const { rows } = await query('SELECT * FROM books WHERE id = $1', [bookData.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [bookData.id]);
     res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
   } catch (err) {
     console.error('Upload book error:', err);
@@ -379,7 +383,7 @@ router.post('/:id/repair-cover', async (req, res) => {
         await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
       }
 
-      const { rows: updated } = await query('SELECT * FROM books WHERE id = $1', [book.id]);
+      const { rows: updated } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [book.id]);
       const baseUrl = getBaseUrl(req);
       res.json(normalizeBookUrls(updated[0], baseUrl));
     });
