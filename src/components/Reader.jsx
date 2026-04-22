@@ -635,7 +635,7 @@ function Reader({ bookData, onBack, addToast }) {
             console.log('Reader: Extracting text from', currentHref);
             text = await extractTextFromSection(book, currentHref);
             text = (text || '').replace(/\s+/g, ' ').trim();
-            if (text.length > 30) break;
+            if (text.length > 2) break;
 
             const section = book.spine.get(currentHref);
             const next = section?.next();
@@ -668,7 +668,7 @@ function Reader({ bookData, onBack, addToast }) {
             let clean = (text || '').replace(/\s+/g, ' ').trim();
 
             // If no embedded text, try OCR
-            if (clean.length <= 30) {
+            if (clean.length <= 2) {
               try {
                 if (!ocrInitialized) {
                   addToast?.('No selectable text found — initializing OCR engine...', 'info');
@@ -678,7 +678,7 @@ function Reader({ bookData, onBack, addToast }) {
                 console.log('Reader: No embedded text, trying OCR on page', from);
                 const ocrText = await ocrPdfPage(pdfRef.current, from);
                 clean = (ocrText || '').replace(/\s+/g, ' ').trim();
-                if (clean.length > 30) {
+                if (clean.length > 2) {
                   addToast?.('OCR text extracted successfully!', 'success');
                 }
               } catch (ocrErr) {
@@ -687,7 +687,7 @@ function Reader({ bookData, onBack, addToast }) {
               }
             }
 
-            if (clean.length > 30) {
+            if (clean.length > 2) {
               text = clean; // Preserve final text (may be from OCR) for UI state
               const sanitized = sanitizeTextForTTS(clean);
               chunks = splitIntoSentenceChunks(sanitized);

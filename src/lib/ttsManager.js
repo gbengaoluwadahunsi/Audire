@@ -14,37 +14,46 @@ function _isAbortError(err) {
  * Fetch MP3 audio for a text chunk from the Edge TTS backend.
  * Returns a Blob or null on failure.
  */
-async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate = 1.0) {
+async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate = 1.0, retries = 2) {
   const trimmed = (text || '').trim();
   if (!trimmed) return null;
-  if (Date.now() < _edgeBackendUnavailableUntil) return null;
-  let timer;
-  try {
-    const controller = new AbortController();
-    timer = setTimeout(() => controller.abort(), 8000); // Slightly longer timeout
-    const res = await fetch(_apiUrl('/api/tts'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: trimmed, voice, rate }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      if (res.status >= 500) {
-        // Backend TTS appears unavailable; cool down to avoid hammering.
-        _edgeBackendUnavailableUntil = Date.now() + 30000;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (Date.now() < _edgeBackendUnavailableUntil) return null;
+    let timer;
+    try {
+      const controller = new AbortController();
+      timer = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      const res = await fetch(_apiUrl('/api/tts'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed, voice, rate }),
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 100) return blob;
       }
-      return null;
+
+      if (res.status >= 500) {
+        _edgeBackendUnavailableUntil = Date.now() + 5000; // brief cooldown
+      }
+    } catch (err) {
+      if (_isAbortError(err)) {
+        console.warn(`[TTS] Timeout on attempt ${attempt + 1}, ${attempt < retries ? 'retrying...' : 'giving up'}`);
+      } else {
+        console.warn('[TTS] Fetch error:', err?.message);
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    const blob = await res.blob();
-    return (blob && blob.size > 100) ? blob : null;
-  } catch (err) {
-    if (_isAbortError(err)) return null;
-    _edgeBackendUnavailableUntil = Date.now() + 30000;
-    console.warn('[TTS] Edge TTS fetch failed:', err?.message);
-    return null;
-  } finally {
-    if (timer) clearTimeout(timer);
+
+    if (attempt < retries) {
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
   }
+  return null;
 }
 
 export function prewarmFirstChunk() { }
@@ -194,7 +203,9 @@ class TTSManager {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
 
       const chunk = textChunks[currentIndex]?.trim();
-      const isGhost = !chunk || chunk.length < 2 || !/[a-zA-ZÀ-ÿ]/.test(chunk);
+      // Relaxed ghost check: skip only if there are NO alphanumeric characters at all.
+      // This ensures sentences starting with numbers (e.g. "1. Start") are NOT skipped.
+      const isGhost = !chunk || chunk.length < 1 || !/[a-zA-ZÀ-ÿ0-9]/.test(chunk);
 
       if (isGhost) {
         currentIndex++;
