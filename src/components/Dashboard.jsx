@@ -238,7 +238,7 @@ function Dashboard({ onBackToLanding }) {
     return (
       <Reader
         bookData={selectedBook}
-        onBack={() => setSelectedBook(null)}
+        onBack={() => { loadBooks(); setSelectedBook(null); }}
         onOpenBook={setSelectedBook}
         addToast={addToast}
       />
