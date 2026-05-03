@@ -77,6 +77,7 @@ function Reader({ bookData, onBack, addToast }) {
   const fontSizeRef = useRef(null);
   const selectedCfiRangeRef = useRef(null);
   const epubResizeObserverRef = useRef(null);
+  const pdfViewerContentRef = useRef(null);
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
 
   const settings = getSettings();
@@ -829,7 +830,10 @@ function Reader({ bookData, onBack, addToast }) {
     }
   };
 
-  const scrollViewerToTop = () => {
+  const scrollViewerToTop = async () => {
+    // Use requestAnimationFrame to ensure DOM is updated before scrolling
+    await new Promise((r) => requestAnimationFrame(r));
+
     if (bookData?.format === 'epub') {
       // Scroll EPUB iframe to top
       const iframe = viewerRef.current?.querySelector?.('iframe');
@@ -842,10 +846,9 @@ function Reader({ bookData, onBack, addToast }) {
         }
       }
     } else if (bookData?.format === 'pdf') {
-      // Scroll PDF viewer to top
-      const pdfViewerContent = viewerRef.current?.parentElement?.querySelector?.('.pdf-viewer-content');
-      if (pdfViewerContent) {
-        pdfViewerContent.scrollTop = 0;
+      // Scroll PDF viewer to top using direct ref
+      if (pdfViewerContentRef.current) {
+        pdfViewerContentRef.current.scrollTop = 0;
       }
     }
   };
@@ -871,12 +874,12 @@ function Reader({ bookData, onBack, addToast }) {
         if (prev?.href) {
           playbackStartHrefRef.current = prev.href;
           await rendition.display(prev.href);
-          scrollViewerToTop();
+          await scrollViewerToTop();
           moved = true;
         } else {
           try {
             await rendition.prev();
-            scrollViewerToTop();
+            await scrollViewerToTop();
             moved = true;
           } catch {
             addToast?.('Start of book', 'info');
@@ -888,7 +891,7 @@ function Reader({ bookData, onBack, addToast }) {
     } else if (!isNavigatingRef.current) {
       const target = (currentPageRef.current || currentPage) - 1;
       await goToPdfPage(target);
-      scrollViewerToTop();
+      await scrollViewerToTop();
       moved = currentPageRef.current === target;
     }
 
@@ -929,12 +932,12 @@ function Reader({ bookData, onBack, addToast }) {
         if (next?.href) {
           playbackStartHrefRef.current = next.href;
           await rendition.display(next.href);
-          scrollViewerToTop();
+          await scrollViewerToTop();
           moved = true;
         } else {
           try {
             await rendition.next();
-            scrollViewerToTop();
+            await scrollViewerToTop();
             moved = true;
           } catch {
             addToast?.('End of book', 'info');
@@ -946,7 +949,7 @@ function Reader({ bookData, onBack, addToast }) {
     } else if (!isNavigatingRef.current) {
       const target = (currentPageRef.current || currentPage) + 1;
       await goToPdfPage(target);
-      scrollViewerToTop();
+      await scrollViewerToTop();
       moved = currentPageRef.current === target;
     }
 
@@ -1027,39 +1030,39 @@ function Reader({ bookData, onBack, addToast }) {
     }
   };
 
-  const handleGotoHighlight = (h) => {
+  const handleGotoHighlight = async (h) => {
     stopTTSIfPlaying();
     if (bookData.format === 'epub') {
       renditionRef.current?.display(h.cfi);
-      scrollViewerToTop();
+      await scrollViewerToTop();
     } else {
       const phys = parseInt(h.cfi) || 1;
       const contentPage = Math.max(1, Math.min(phys - pdfPageOffset, contentTotalPages));
-      goToPdfPage(contentPage);
-      scrollViewerToTop();
+      await goToPdfPage(contentPage);
+      await scrollViewerToTop();
     }
     setShowHighlights(false);
   };
 
-  const handleGotoBookmark = (bm) => {
+  const handleGotoBookmark = async (bm) => {
     stopTTSIfPlaying();
     if (bookData.format === 'epub') {
       renditionRef.current?.display(bm.cfi);
-      scrollViewerToTop();
+      await scrollViewerToTop();
     } else {
       const phys = parseInt(bm.cfi) || 1;
       const contentPage = Math.max(1, Math.min(phys - pdfPageOffset, contentTotalPages));
-      goToPdfPage(contentPage);
-      scrollViewerToTop();
+      await goToPdfPage(contentPage);
+      await scrollViewerToTop();
     }
     setShowBookmarks(false);
   };
 
-  const handleGotoToc = (item) => {
+  const handleGotoToc = async (item) => {
     if (item.href) {
       stopTTSIfPlaying();
       renditionRef.current?.display(item.href);
-      scrollViewerToTop();
+      await scrollViewerToTop();
       setShowToc(false);
     }
   };
@@ -1083,16 +1086,16 @@ function Reader({ bookData, onBack, addToast }) {
     }
   };
 
-  const handleGotoSearchResult = (match) => {
+  const handleGotoSearchResult = async (match) => {
     stopTTSIfPlaying();
     if (bookData.format === 'epub' && match.href) {
       renditionRef.current?.display(match.href);
-      scrollViewerToTop();
+      await scrollViewerToTop();
       setShowSearch(false);
     } else if (bookData.format === 'pdf' && match.page != null) {
       const contentPage = Math.max(1, Math.min(match.page - pdfPageOffset, contentTotalPages));
-      goToPdfPage(contentPage);
-      scrollViewerToTop();
+      await goToPdfPage(contentPage);
+      await scrollViewerToTop();
       setShowSearch(false);
     }
   };
@@ -1428,7 +1431,7 @@ function Reader({ bookData, onBack, addToast }) {
             {bookData.format === 'epub' ? (
               <div ref={viewerRef} className="epub-viewer" />
             ) : (
-              <div className="pdf-viewer-content">
+              <div ref={pdfViewerContentRef} className="pdf-viewer-content">
                 <div className="pdf-page-row">
                   <form className="pdf-page-indicator" onSubmit={handlePageInputSubmit}>
                     <span className="pdf-page-label">Page</span>
