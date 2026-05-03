@@ -829,6 +829,27 @@ function Reader({ bookData, onBack, addToast }) {
     }
   };
 
+  const scrollViewerToTop = () => {
+    if (bookData?.format === 'epub') {
+      // Scroll EPUB iframe to top
+      const iframe = viewerRef.current?.querySelector?.('iframe');
+      if (iframe?.contentDocument) {
+        try {
+          iframe.contentDocument.documentElement.scrollTop = 0;
+          iframe.contentDocument.body.scrollTop = 0;
+        } catch {
+          // Ignore cross-origin errors
+        }
+      }
+    } else if (bookData?.format === 'pdf') {
+      // Scroll PDF viewer to top
+      const pdfViewerContent = viewerRef.current?.parentElement?.querySelector?.('.pdf-viewer-content');
+      if (pdfViewerContent) {
+        pdfViewerContent.scrollTop = 0;
+      }
+    }
+  };
+
   const prevPage = async () => {
     const wasActive = isPlayingTTS || ttsManager.isPaused || ttsManager.hasActivePlayback;
     stopTTSIfPlaying();
@@ -850,10 +871,12 @@ function Reader({ bookData, onBack, addToast }) {
         if (prev?.href) {
           playbackStartHrefRef.current = prev.href;
           await rendition.display(prev.href);
+          scrollViewerToTop();
           moved = true;
         } else {
           try {
             await rendition.prev();
+            scrollViewerToTop();
             moved = true;
           } catch {
             addToast?.('Start of book', 'info');
@@ -865,6 +888,7 @@ function Reader({ bookData, onBack, addToast }) {
     } else if (!isNavigatingRef.current) {
       const target = (currentPageRef.current || currentPage) - 1;
       await goToPdfPage(target);
+      scrollViewerToTop();
       moved = currentPageRef.current === target;
     }
 
@@ -905,10 +929,12 @@ function Reader({ bookData, onBack, addToast }) {
         if (next?.href) {
           playbackStartHrefRef.current = next.href;
           await rendition.display(next.href);
+          scrollViewerToTop();
           moved = true;
         } else {
           try {
             await rendition.next();
+            scrollViewerToTop();
             moved = true;
           } catch {
             addToast?.('End of book', 'info');
@@ -920,6 +946,7 @@ function Reader({ bookData, onBack, addToast }) {
     } else if (!isNavigatingRef.current) {
       const target = (currentPageRef.current || currentPage) + 1;
       await goToPdfPage(target);
+      scrollViewerToTop();
       moved = currentPageRef.current === target;
     }
 
@@ -1002,11 +1029,14 @@ function Reader({ bookData, onBack, addToast }) {
 
   const handleGotoHighlight = (h) => {
     stopTTSIfPlaying();
-    if (bookData.format === 'epub') renditionRef.current?.display(h.cfi);
-    else {
+    if (bookData.format === 'epub') {
+      renditionRef.current?.display(h.cfi);
+      scrollViewerToTop();
+    } else {
       const phys = parseInt(h.cfi) || 1;
       const contentPage = Math.max(1, Math.min(phys - pdfPageOffset, contentTotalPages));
       goToPdfPage(contentPage);
+      scrollViewerToTop();
     }
     setShowHighlights(false);
   };
@@ -1015,10 +1045,12 @@ function Reader({ bookData, onBack, addToast }) {
     stopTTSIfPlaying();
     if (bookData.format === 'epub') {
       renditionRef.current?.display(bm.cfi);
+      scrollViewerToTop();
     } else {
       const phys = parseInt(bm.cfi) || 1;
       const contentPage = Math.max(1, Math.min(phys - pdfPageOffset, contentTotalPages));
       goToPdfPage(contentPage);
+      scrollViewerToTop();
     }
     setShowBookmarks(false);
   };
@@ -1027,6 +1059,7 @@ function Reader({ bookData, onBack, addToast }) {
     if (item.href) {
       stopTTSIfPlaying();
       renditionRef.current?.display(item.href);
+      scrollViewerToTop();
       setShowToc(false);
     }
   };
@@ -1054,10 +1087,12 @@ function Reader({ bookData, onBack, addToast }) {
     stopTTSIfPlaying();
     if (bookData.format === 'epub' && match.href) {
       renditionRef.current?.display(match.href);
+      scrollViewerToTop();
       setShowSearch(false);
     } else if (bookData.format === 'pdf' && match.page != null) {
       const contentPage = Math.max(1, Math.min(match.page - pdfPageOffset, contentTotalPages));
       goToPdfPage(contentPage);
+      scrollViewerToTop();
       setShowSearch(false);
     }
   };
