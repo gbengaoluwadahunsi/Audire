@@ -40,9 +40,11 @@ function normalizeBookUrls(book) {
 }
 
 async function fetchJson(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...opts.headers };
+
   const res = await fetch(url(path), {
     ...opts,
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    headers,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -77,6 +79,7 @@ export async function updateBookProgress(bookId, cfi, progressPercent = null, to
   const body = { last_cfi: cfi };
   if (progressPercent != null) body.progress_percent = Math.round(progressPercent);
   if (totalPages != null) body.total_pages = totalPages;
+
   return fetch(url(`/api/books/${bookId}/progress`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -87,6 +90,7 @@ export async function updateBookProgress(bookId, cfi, progressPercent = null, to
 export async function downloadBookFile(fileUrl) {
   const normalized = normalizeBackendUrl(fileUrl || '');
   const fullUrl = normalized?.startsWith('http') ? normalized : url(normalized || '');
+
   const res = await fetch(fullUrl);
   if (!res.ok) throw new Error(res.statusText || 'Failed to download');
   return res.arrayBuffer();
@@ -124,6 +128,7 @@ const API_BASE = (import.meta.env.VITE_API_URL || '').trim();
 
 async function aiFetch(endpoint, body) {
   const base = API_BASE.replace(/\/$/, '');
+  
   const res = await fetch(`${base}${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -232,5 +237,62 @@ export async function librarySyncUpdateHighlightColor(id, color) {
 
 export async function librarySyncDeleteHighlight(id) {
   return fetchJson(`/api/library-sync/highlights/${id}`, { method: 'DELETE' });
+}
+
+/* ── Book Metadata ── */
+
+export async function updateBookMetadata(bookId, { title, author }) {
+  return fetchJson(`/api/books/${bookId}/metadata`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title, author }),
+  });
+}
+
+export async function uploadBookCover(bookId, coverFile) {
+  const form = new FormData();
+  form.append('cover', coverFile, coverFile.name || 'cover.jpg');
+
+  const token = localStorage.getItem('audire_token');
+  const headers = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(url(`/api/books/${bookId}/cover`), {
+    method: 'POST',
+    body: form,
+    headers,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+export async function searchBookMetadata(title) {
+  return fetchJson('/api/books/search-metadata', {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  });
+}
+
+/* ── Reading Stats ── */
+
+export async function startReadingSession(bookId) {
+  return fetchJson('/api/stats/session/start', {
+    method: 'POST',
+    body: JSON.stringify({ bookId }),
+  });
+}
+
+export async function endReadingSession(sessionId, pagesRead) {
+  return fetchJson(`/api/stats/session/${sessionId}/end`, {
+    method: 'PATCH',
+    body: JSON.stringify({ pagesRead }),
+  });
+}
+
+export async function getReadingSummary(days = 30) {
+  return fetchJson(`/api/stats/summary?days=${days}`);
 }
 

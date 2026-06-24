@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -16,8 +16,8 @@ import { ocrPdfPage, terminateOcr } from '../lib/ocr';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
-import { updateBookProgress, downloadBookFile } from '../lib/api';
-import { getSettings, getPdfOffset, setPdfOffset } from '../lib/settings';
+import { updateBookProgress, downloadBookFile, startReadingSession, endReadingSession } from '../lib/api';
+import { getSettings, getPdfOffset, setPdfOffset, saveSettings } from '../lib/settings';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
 import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
@@ -54,9 +54,39 @@ function Reader({ bookData, onBack, addToast }) {
   const [selectionContext, setSelectionContext] = useState('');
   const [continuousMode, setContinuousMode] = useState(true);
   const continuousModeRef = useRef(true);
+  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [pdfLoadError, setPdfLoadError] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pageInputValue, setPageInputValue] = useState('');
+
+  // Sleep Timer state
+  const [sleepTimer, setSleepTimer] = useState(null); // time in minutes, null means off
+  const [sleepTimerRemaining, setSleepTimerRemaining] = useState(null); // time remaining in seconds
+
+  useEffect(() => {
+    if (sleepTimer === null) {
+      setSleepTimerRemaining(null);
+      return;
+    }
+    
+    // Set the end time
+    const endTime = Date.now() + sleepTimer * 60000;
+    setSleepTimerRemaining(sleepTimer * 60);
+
+    const interval = setInterval(() => {
+      const remain = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+      setSleepTimerRemaining(remain);
+      
+      if (remain <= 0) {
+        setSleepTimer(null);
+        ttsManager.pause();
+        pause();
+        addToast?.('Sleep timer ended. Playback paused.', 'info');
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sleepTimer, pause, addToast]);
   const [pdfPageOffset, setPdfPageOffsetState] = useState(0);
   const pdfCanvasRef = useRef(null);
   const pdfTextLayerRef = useRef(null);
@@ -82,6 +112,21 @@ function Reader({ bookData, onBack, addToast }) {
 
   const settings = getSettings();
   const readerFontSize = settings.fontSize ?? 15;
+
+  const readingSessionRef = useRef(null);
+  const sessionPagesRef = useRef(0);
+
+  useEffect(() => {
+    let mounted = true;
+    startReadingSession(bookData?.id).then((session) => {
+      if (mounted) readingSessionRef.current = session;
+    }).catch(() => { });
+    return () => {
+      if (readingSessionRef.current) {
+        endReadingSession(readingSessionRef.current.id, sessionPagesRef.current).catch(() => { });
+      }
+    };
+  }, [bookData?.id]);
 
   useEffect(() => {
     const updateSelection = () => {
@@ -215,7 +260,7 @@ function Reader({ bookData, onBack, addToast }) {
             width: w,
             height: h,
             flow: 'paginated',
-            spread: 'none',
+            spread: settings.layout === 'dual' ? 'auto' : 'none',
             manager: 'default',
             allowScriptedContent: true,
           });
@@ -255,6 +300,10 @@ function Reader({ bookData, onBack, addToast }) {
               }
             });
 
+            const fontStyle = settings.fontFamily === 'System' ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' : settings.fontFamily;
+            const marginValue = `${settings.margin}rem`;
+            const paragraphSpacing = `${settings.paragraphSpacing !== undefined ? settings.paragraphSpacing : 0.5}rem`;
+
             const style = doc.createElement('style');
             if (settings.theme === 'dark') {
               style.innerHTML = `
@@ -264,6 +313,9 @@ function Reader({ bookData, onBack, addToast }) {
                       color: #e5e5e5 !important;
                       user-select: text !important;
                       -webkit-user-select: text !important;
+                      font-family: ${fontStyle} !important;
+                      margin-left: ${marginValue} !important;
+                      margin-right: ${marginValue} !important;
                   }
                   *, div, p, span, h1, h2, h3, h4, h5, h6, li, blockquote, section, article {
                       background-color: transparent !important;
@@ -271,6 +323,10 @@ function Reader({ bookData, onBack, addToast }) {
                       color: #e5e5e5 !important;
                       user-select: text !important;
                       -webkit-user-select: text !important;
+                  }
+                  p {
+                      margin-top: ${paragraphSpacing} !important;
+                      margin-bottom: ${paragraphSpacing} !important;
                   }
                   a { color: #a8b1ff !important; }
                   img { mix-blend-mode: luminosity; opacity: 0.9; }
@@ -283,6 +339,9 @@ function Reader({ bookData, onBack, addToast }) {
                       color: #1a1a1a !important;
                       user-select: text !important;
                       -webkit-user-select: text !important;
+                      font-family: ${fontStyle} !important;
+                      margin-left: ${marginValue} !important;
+                      margin-right: ${marginValue} !important;
                   }
                   *, div, p, span, h1, h2, h3, h4, h5, h6, li, blockquote, section, article {
                       background-color: transparent !important;
@@ -290,6 +349,10 @@ function Reader({ bookData, onBack, addToast }) {
                       color: #1a1a1a !important;
                       user-select: text !important;
                       -webkit-user-select: text !important;
+                  }
+                  p {
+                      margin-top: ${paragraphSpacing} !important;
+                      margin-bottom: ${paragraphSpacing} !important;
                   }
                 `;
             }
@@ -404,6 +467,7 @@ function Reader({ bookData, onBack, addToast }) {
     if (contentPageNum < 1 || phys > pdfRef.current.numPages) return;
     isNavigatingRef.current = true;
     setCurrentPage(contentPageNum);
+    sessionPagesRef.current += 1;
     let extractedText = '';
     try {
       extractedText = await extractTextFromPdfDoc(pdfRef.current, phys);
@@ -748,7 +812,11 @@ function Reader({ bookData, onBack, addToast }) {
               const ct = Math.max(1, totalPages - pdfPageOffset);
               setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
             }
-          }, sessionId);
+          }, sessionId, {
+            title: bookData.title,
+            author: bookData.author,
+            cover: bookData.cover,
+          });
 
           if (!firstChunkSignalled) setIsTTSLoading(false); // fallback: all chunks were skipped
         }
@@ -1113,6 +1181,146 @@ function Reader({ bookData, onBack, addToast }) {
     }
   }, [readerFontSize]);
 
+  useEffect(() => {
+    if (bookData.format !== renditionRef.current) return;
+    const rendition = renditionRef.current;
+    const book = bookRef.current;
+    if (!rendition || !book) return;
+
+    const currentLocation = rendition.currentLocation?.();
+    const cfi = currentLocation?.start?.cfi;
+
+    const el = viewerRef.current;
+    const w = el?.offsetWidth || 800;
+    const h = el?.offsetHeight || 600;
+
+    try {
+      rendition.destroy();
+    } catch { /* ignore */ }
+
+    const newRendition = book.renderTo(el, {
+      width: w,
+      height: h,
+      flow: 'paginated',
+      spread: settings.layout === 'dual' ? 'auto' : 'none',
+      manager: 'default',
+      allowScriptedContent: true,
+    });
+    renditionRef.current = newRendition;
+
+    newRendition.on('selected', (cfiRange) => {
+      selectedCfiRangeRef.current = cfiRange;
+    });
+
+    newRendition.hooks.content.register((contents) => {
+      const doc = contents.document;
+      if (!doc) return;
+
+      const notifySelection = () => {
+        try {
+          const sel = doc.getSelection?.()?.toString?.()?.trim() ?? '';
+          const ctx = doc.body?.textContent?.slice(0, 500) ?? '';
+          setSelectedText(sel);
+          setSelectionContext(ctx);
+        } catch { /* ignore */ }
+      };
+      doc.addEventListener('selectionchange', notifySelection);
+
+      const bookHighlights = getHighlights(bookData.id);
+      bookHighlights.forEach((h) => {
+        try {
+          const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
+          newRendition.annotations?.highlight?.(h.cfi, {}, () => { }, 'hl', {
+            fill: colorInfo.color,
+            'fill-opacity': '0.4',
+            'mix-blend-mode': 'multiply',
+          });
+        } catch { /* ignore */ }
+      });
+
+      const fontStyle = settings.fontFamily === 'System' ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' : settings.fontFamily;
+      const marginValue = `${settings.margin}rem`;
+      const paragraphSpacing = `${settings.paragraphSpacing !== undefined ? settings.paragraphSpacing : 0.5}rem`;
+
+      const style = doc.createElement('style');
+      if (settings.theme === 'dark') {
+        style.innerHTML = `
+          html, body {
+              background-color: #0a0a0a !important;
+              background: #0a0a0a !important;
+              color: #e5e5e5 !important;
+              user-select: text !important;
+              -webkit-user-select: text !important;
+              font-family: ${fontStyle} !important;
+              margin-left: ${marginValue} !important;
+              margin-right: ${marginValue} !important;
+          }
+          *, div, p, span, h1, h2, h3, h4, h5, h6, li, blockquote, section, article {
+              background-color: transparent !important;
+              background: transparent !important;
+              color: #e5e5e5 !important;
+              user-select: text !important;
+              -webkit-user-select: text !important;
+          }
+          p {
+              margin-top: ${paragraphSpacing} !important;
+              margin-bottom: ${paragraphSpacing} !important;
+          }
+          a { color: #a8b1ff !important; }
+          img { mix-blend-mode: luminosity; opacity: 0.9; }
+        `;
+      } else {
+        style.innerHTML = `
+          html, body {
+              background-color: #fafafa !important;
+              background: #fafafa !important;
+              color: #1a1a1a !important;
+              user-select: text !important;
+              -webkit-user-select: text !important;
+              font-family: ${fontStyle} !important;
+              margin-left: ${marginValue} !important;
+              margin-right: ${marginValue} !important;
+          }
+          *, div, p, span, h1, h2, h3, h4, h5, h6, li, blockquote, section, article {
+              background-color: transparent !important;
+              background: transparent !important;
+              color: #1a1a1a !important;
+              user-select: text !important;
+              -webkit-user-select: text !important;
+          }
+          p {
+              margin-top: ${paragraphSpacing} !important;
+              margin-bottom: ${paragraphSpacing} !important;
+          }
+        `;
+      }
+      doc.head.appendChild(style);
+    });
+
+    if (cfi) {
+      newRendition.display(cfi);
+    }
+  }, [settings.layout]);
+
+  useEffect(() => {
+    if (sleepTimerRef.current) {
+      clearTimeout(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+    if (sleepTimer && isPlayingTTS) {
+      sleepTimerRef.current = setTimeout(() => {
+        console.log('Sleep timer triggered, pausing TTS');
+        handlePlayPauseRef.current?.();
+        setSleepTimer(null);
+      }, sleepTimer * 60 * 1000);
+    }
+    return () => {
+      if (sleepTimerRef.current) {
+        clearTimeout(sleepTimerRef.current);
+      }
+    };
+  }, [sleepTimer, isPlayingTTS]);
+
   return (
     <div className={`reader-view ${settings.theme === 'light' ? 'reader-view--light' : ''}`} style={readerStyles}>
       <div className="reader-header">
@@ -1138,7 +1346,7 @@ function Reader({ bookData, onBack, addToast }) {
         </div>
         <div className="reader-actions">
           <button
-            className={`control-btn ${showAIPanel ? 'active' : ''}`}
+            className={`control-btn mobile-visible ${showAIPanel ? 'active' : ''}`}
             onClick={() => setShowAIPanel(!showAIPanel)}
             title="AI Assistant (Explain, Define, Summarize)"
           >
@@ -1191,6 +1399,15 @@ function Reader({ bookData, onBack, addToast }) {
             title="Flashcards"
           >
             <Layers size={18} />
+          </button>
+
+          {/* Mobile-only More button — opens drawer */}
+          <button
+            className="control-btn reader-mobile-more-btn"
+            onClick={() => setShowMobileDrawer(true)}
+            title="More options"
+          >
+            <MoreVertical size={18} />
           </button>
         </div>
 
@@ -1534,6 +1751,160 @@ function Reader({ bookData, onBack, addToast }) {
             <ChevronRight size={24} />
           </button>
         </div>
+      </div>
+
+      {/* ===== MOBILE OPTIONS DRAWER ===== */}
+      {showMobileDrawer && (
+        <div className="reader-mobile-drawer-overlay" onClick={() => setShowMobileDrawer(false)}>
+          <div className="reader-mobile-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="reader-mobile-drawer-title">Reader Options</div>
+
+            <button
+              className={`reader-mobile-drawer-item ${showSearch ? 'active' : ''}`}
+              onClick={() => {
+                setShowSearch(!showSearch);
+                setSearchResults([]);
+                setSearchQuery('');
+                if (!showSearch) { setShowToc(false); setShowBookmarks(false); setShowHighlights(false); setShowFlashcards(false); }
+                setShowMobileDrawer(false);
+              }}
+            >
+              <Search size={20} /> Search in Book
+            </button>
+
+            <button
+              className={`reader-mobile-drawer-item ${showToc ? 'active' : ''}`}
+              onClick={() => { setShowToc(!showToc); setShowMobileDrawer(false); }}
+            >
+              <List size={20} /> Table of Contents
+            </button>
+
+            <div className="reader-mobile-drawer-divider" />
+
+            <button
+              className={`reader-mobile-drawer-item ${showBookmarks ? 'active' : ''}`}
+              onClick={() => { setShowBookmarks(!showBookmarks); setShowHighlights(false); setShowFlashcards(false); setShowMobileDrawer(false); }}
+            >
+              <Bookmark size={20} /> Bookmarks
+            </button>
+
+            <button
+              className="reader-mobile-drawer-item"
+              onClick={() => { handleAddBookmark(); setShowMobileDrawer(false); }}
+            >
+              <Bookmark size={20} style={{ opacity: 0.6 }} /> Add Bookmark
+            </button>
+
+            <button
+              className={`reader-mobile-drawer-item ${showHighlights ? 'active' : ''}`}
+              onClick={() => { setShowHighlights(!showHighlights); setShowBookmarks(false); setShowFlashcards(false); setShowMobileDrawer(false); }}
+            >
+              <Highlighter size={20} /> Highlights
+            </button>
+
+            <div className="reader-mobile-drawer-divider" />
+
+            <button
+              className={`reader-mobile-drawer-item ${showFlashcards ? 'active' : ''}`}
+              onClick={() => { setShowFlashcards(!showFlashcards); setShowBookmarks(false); setShowHighlights(false); setShowMobileDrawer(false); }}
+            >
+              <Layers size={20} /> Flashcards
+            </button>
+
+            <div className="reader-mobile-drawer-divider" />
+
+            <div className="reader-mobile-drawer-continuous">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={continuousMode}
+                  onChange={(e) => { setContinuousMode(e.target.checked); continuousModeRef.current = e.target.checked; }}
+                />
+                Continuous TTS
+              </label>
+            </div>
+
+            <div className="reader-mobile-drawer-continuous">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.layout === 'dual'}
+                  onChange={(e) => {
+                    const next = e.target.checked ? 'dual' : 'single';
+                    saveSettings({ ...settings, layout: next });
+                  }}
+                />
+                Dual-page (Spread)
+              </label>
+            </div>
+
+            <div className="reader-mobile-drawer-continuous">
+              <label>
+                <span>Sleep Timer</span>
+                <select
+                  value={sleepTimer || ''}
+                  onChange={(e) => setSleepTimer(e.target.value ? parseInt(e.target.value, 10) : null)}
+                  style={{ marginLeft: 'auto', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text)' }}
+                >
+                  <option value="">Off</option>
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="60">60 minutes</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MOBILE READER FOOTER ===== */}
+      <div className="reader-mobile-footer">
+        <button
+          type="button"
+          className="reader-mobile-footer-btn"
+          onClick={prevPage}
+          aria-label="Previous page"
+        >
+          <ChevronLeft size={22} />
+        </button>
+
+        <div className="reader-mobile-footer-progress">
+          <div className="reader-mobile-footer-page">
+            {bookData.format === 'pdf'
+              ? `Page ${currentPage} of ${contentTotalPages}`
+              : `${Math.round(progress)}%`}
+          </div>
+          <div className="reader-mobile-footer-bar">
+            <div
+              className="reader-mobile-footer-bar-fill"
+              style={{ width: `${Math.round(progress)}%` }}
+            />
+          </div>
+        </div>
+
+        <button
+          className="reader-mobile-play-btn"
+          onClick={handlePlayPause}
+          disabled={isTTSLoading}
+          title={isPlayingTTS ? 'Pause TTS' : 'Play TTS'}
+        >
+          {isTTSLoading ? (
+            <div className="small-loader" />
+          ) : isPlayingTTS ? (
+            <Pause size={20} fill="currentColor" />
+          ) : (
+            <Play size={20} fill="currentColor" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          className="reader-mobile-footer-btn"
+          onClick={nextPage}
+          aria-label="Next page"
+        >
+          <ChevronRight size={22} />
+        </button>
       </div>
     </div>
   );

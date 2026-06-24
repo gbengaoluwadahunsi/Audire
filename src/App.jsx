@@ -1,5 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import LandingPage from './components/LandingPage';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
 import { getSettings } from './lib/settings';
@@ -11,13 +12,11 @@ const PING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 function App() {
   const [view, setView] = useState('landing');
 
-  // Apply initial theme
   useEffect(() => {
     const settings = getSettings();
     document.documentElement.classList.toggle('light', settings.theme === 'light');
   }, []);
 
-  // Keep Render free-tier backend awake: ping /api/health every 5 minutes
   useEffect(() => {
     if (!API_BASE) return;
     const healthUrl = `${API_BASE.replace(/\/$/, '')}/api/health`;
@@ -27,8 +26,26 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        document.activeElement?.blur();
+      }
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+        const tag = document.activeElement?.tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+          e.preventDefault();
+          const searchInput = document.querySelector('.dashboard-search input');
+          if (searchInput) searchInput.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
-    <>
+    <ErrorBoundary>
       {view === 'landing' ? (
         <LandingPage onEnter={() => setView('dashboard')} />
       ) : (
@@ -36,7 +53,7 @@ function App() {
           <Dashboard onBackToLanding={() => setView('landing')} />
         </Suspense>
       )}
-    </>
+    </ErrorBoundary>
   );
 }
 

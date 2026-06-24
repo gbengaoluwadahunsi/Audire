@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, ArrowLeft, Edit, TrendingUp } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
@@ -10,9 +10,14 @@ import { getCollections, saveCollections, addCollection, addBookToCollection, re
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
+import { setCustomPronunciations } from '../lib/textSanitation';
 import Reader from './Reader';
 import MiniPlayer from './MiniPlayer';
+import MetadataEditor from './MetadataEditor';
+import StatsDashboard from './StatsDashboard';
 import { ToastContainer } from './Toast';
+import VirtualizedBookGrid from './VirtualizedBookGrid';
+import DragDropCollection from './DragDropCollection';
 
 const SORT_OPTIONS = [
   { id: 'title', label: 'Title' },
@@ -54,8 +59,14 @@ function Dashboard({ onBackToLanding }) {
   const [librarySort, setLibrarySort] = useState(() => getSettings().librarySort || 'last_read');
   const [librarySortOrder, setLibrarySortOrder] = useState(() => getSettings().librarySortOrder || 'desc');
   const [theme, setTheme] = useState(() => getSettings().theme || 'dark');
+  const [editingBook, setEditingBook] = useState(null);
+  const [selectedBookIds, setSelectedBookIds] = useState(new Set());
+  const [formatFilter, setFormatFilter] = useState('all');
+  const [bulkAction, setBulkAction] = useState(null);
+  const [showCollectionDeleteConfirm, setShowCollectionDeleteConfirm] = useState(null);
+  const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
   const fileInputRef = useRef(null);
-  const coverErrorIds = useRef(new Set());
+  const [coverErrorIds, setCoverErrorIds] = useState(() => new Set());
   const coverRepairAttempted = useRef(new Set());
   const coverRepairQueueRef = useRef(Promise.resolve());
 
@@ -67,7 +78,11 @@ function Dashboard({ onBackToLanding }) {
       .then(async () => {
         const newCoverUrl = await repairBookCover(book);
         if (newCoverUrl) {
-          coverErrorIds.current.delete(book.id);
+          setCoverErrorIds(prev => {
+            const next = new Set(prev);
+            next.delete(book.id);
+            return next;
+          });
           setBooks(prev => prev.map(b => b.id === book.id ? { ...b, cover: newCoverUrl } : b));
           if (refreshList) {
             const latest = await fetchBooks();
@@ -88,9 +103,9 @@ function Dashboard({ onBackToLanding }) {
     addToast(`${nextTheme === 'dark' ? 'Dark' : 'Light'} mode enabled`, 'success');
   };
 
-  const addToast = (message, type = 'info') => {
+  const addToast = (message, type = 'info', action = null, onAction = null) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => [...prev, { id, message, type, action, onAction }]);
   };
 
   const removeToast = (id) => {
@@ -118,6 +133,64 @@ function Dashboard({ onBackToLanding }) {
       addToast('Could not connect to your library', 'error');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const toggleBookSelect = (bookId) => {
+    setSelectedBookIds(prev => {
+      const next = new Set(prev);
+      if (next.has(bookId)) next.delete(bookId);
+      else next.add(bookId);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    const visibleIds = filteredBooks.map(b => b.id);
+    setSelectedBookIds(new Set(visibleIds));
+  };
+
+  const clearSelection = () => setSelectedBookIds(new Set());
+
+  const handleBulkDelete = async () => {
+    const ids = [...selectedBookIds];
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} book${ids.length > 1 ? 's' : ''}?`)) return;
+    for (const id of ids) {
+      try { await deleteBook(id); } catch { /* continue */ }
+    }
+    addToast(`${ids.length} book${ids.length > 1 ? 's' : ''} deleted`, 'success');
+    setSelectedBookIds(new Set());
+    await loadBooks();
+  };
+
+  const handleBulkMoveToCollection = async (collectionId) => {
+    const ids = [...selectedBookIds];
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      try { await addBookToCollection(collectionId, id); } catch { /* continue */ }
+    }
+    setCollections(await getCollections());
+    addToast(`${ids.length} book${ids.length > 1 ? 's' : ''} added to collection`, 'success');
+    setSelectedBookIds(new Set());
+    setBulkAction(null);
+  };
+
+  const handleReorderInCollection = async (collectionId, bookIds) => {
+    setSelectedCollection(prev => prev ? { ...prev, bookIds } : prev);
+    try {
+      const token = localStorage.getItem('audire_token');
+      await fetch(`${import.meta.env.VITE_API_URL || ''}/api/library-sync/collections/${collectionId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: selectedCollection?.name, bookIds }),
+      });
+      setCollections(await getCollections());
+    } catch (err) {
+      addToast('Failed to reorder: ' + err.message, 'error');
     }
   };
 
@@ -209,8 +282,9 @@ function Dashboard({ onBackToLanding }) {
         const matchesSearch = !searchQuery ||
           (b.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
           (b.author || '').toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesFormat = formatFilter === 'all' || b.format === formatFilter;
 
-        return !isCollected && matchesSearch;
+        return !isCollected && matchesSearch && matchesFormat;
       }
     )
     .sort((a, b) => {
@@ -279,6 +353,13 @@ function Dashboard({ onBackToLanding }) {
             <Settings size={20} />
             <span>Settings</span>
           </button>
+          <button
+            className={`dashboard-nav-item ${activeTab === 'stats' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('stats'); setSelectedCollection(null); }}
+          >
+            <TrendingUp size={20} />
+            <span>Stats</span>
+          </button>
 
           <div style={{ flex: 1, minHeight: '20px' }} />
 
@@ -321,15 +402,81 @@ function Dashboard({ onBackToLanding }) {
         </div>
       </aside>
 
+      {/* ===== MOBILE HEADER (hidden on desktop via CSS) ===== */}
+      <header className="dashboard-mobile-header">
+        <div className="dashboard-mobile-brand">
+          <img src="/logo.svg" alt="Audire" />
+          <span>Audire</span>
+        </div>
+        <div className="dashboard-mobile-actions">
+          <button
+            className="dashboard-mobile-btn"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+          >
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+          <button
+            className="dashboard-mobile-btn"
+            onClick={onBackToLanding}
+            title="Back to Landing"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <button
+            className="dashboard-mobile-add"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            title="Add Book"
+          >
+            {isUploading ? <div className="small-loader" /> : <Plus size={18} />}
+            {isUploading ? 'Uploading…' : 'Add Book'}
+          </button>
+        </div>
+      </header>
+
+      {/* ===== MOBILE BOTTOM TAB NAV (hidden on desktop via CSS) ===== */}
+      <nav className="dashboard-mobile-nav">
+        <button
+          className={`dashboard-mobile-tab ${activeTab === 'library' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('library'); setSelectedCollection(null); }}
+        >
+          <Library size={22} />
+          Library
+        </button>
+        <button
+          className={`dashboard-mobile-tab ${activeTab === 'collections' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('collections'); setSelectedCollection(null); }}
+        >
+          <FolderPlus size={22} />
+          Collections
+        </button>
+        <button
+          className={`dashboard-mobile-tab ${activeTab === 'settings' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('settings'); setSelectedCollection(null); }}
+        >
+          <Settings size={22} />
+          Settings
+        </button>
+        <button
+          className={`dashboard-mobile-tab ${activeTab === 'stats' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('stats'); setSelectedCollection(null); }}
+        >
+          <TrendingUp size={22} />
+          Stats
+        </button>
+      </nav>
+
       <main className="dashboard-main">
         <header className="dashboard-header">
           <h1>
             {activeTab === 'library' && 'Your Library'}
             {activeTab === 'collections' && 'Collections'}
             {activeTab === 'settings' && 'Settings'}
+            {activeTab === 'stats' && 'Reading Statistics'}
           </h1>
           {activeTab === 'library' && (
-            <div className="dashboard-library-toolbar">
+            <div className="dashboard-library-toolbar" role="toolbar" aria-label="Library controls">
               <div className="dashboard-search">
                 <Search size={18} />
                 <input
@@ -337,9 +484,20 @@ function Dashboard({ onBackToLanding }) {
                   placeholder="Search books..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Search books"
                 />
               </div>
               <div className="dashboard-sort">
+                <select
+                  value={formatFilter}
+                  onChange={(e) => setFormatFilter(e.target.value)}
+                  className="dashboard-sort-select"
+                  aria-label="Filter by format"
+                >
+                  <option value="all">All Formats</option>
+                  <option value="epub">EPUB</option>
+                  <option value="pdf">PDF</option>
+                </select>
                 <select
                   value={librarySort}
                   onChange={(e) => {
@@ -364,6 +522,14 @@ function Dashboard({ onBackToLanding }) {
                   {librarySortOrder === 'asc' ? '↑' : '↓'}
                 </button>
               </div>
+              <button
+                className={`dashboard-sort-order ${selectedBookIds.size > 0 ? 'active' : ''}`}
+                onClick={() => selectedBookIds.size > 0 ? clearSelection() : selectAllVisible()}
+                title={selectedBookIds.size > 0 ? 'Clear selection' : 'Select all'}
+                style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+              >
+                {selectedBookIds.size > 0 ? `${selectedBookIds.size} selected` : 'Select'}
+              </button>
             </div>
           )}
         </header>
@@ -379,70 +545,74 @@ function Dashboard({ onBackToLanding }) {
                 transition={{ duration: 0.2 }}
               >
                 {isLoading ? (
-                  <div className="dashboard-loader">
-                    <div className="loader-spinner" />
-                    <span>Loading library...</span>
-                  </div>
-                ) : filteredBooks.length > 0 ? (
-                  <div className="dashboard-grid">
-                    {filteredBooks.map((book) => (
-                      <motion.div
-                        key={book.id}
-                        className="dashboard-book-card"
-                        onClick={() => setSelectedBook(book)}
-                        whileHover={{ y: -6, transition: { duration: 0.2 } }}
-                      >
-                        <div className="dashboard-book-cover">
-                          {book.cover && !coverErrorIds.current.has(book.id) ? (
-                            <img
-                              src={book.cover}
-                              alt={book.title}
-                              onError={() => {
-                                coverErrorIds.current.add(book.id);
-                                setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                                enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
-                              }}
-                            />
-                          ) : (
-                            <FileText size={40} color="var(--text-tertiary)" />
-                          )}
-                          <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
-                          <button
-                            className="dashboard-book-delete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowDeleteConfirm(showDeleteConfirm === book.id ? null : book.id);
-                            }}
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          <button
-                            className="dashboard-book-collection"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowCollectionMenu(showCollectionMenu === book.id ? null : book.id);
-                            }}
-                            title="Add to collection"
-                          >
-                            <FolderPlus size={14} />
-                          </button>
+                  <div className="dashboard-skeleton-grid">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="skeleton-card">
+                        <div className="skeleton-cover" />
+                        <div className="skeleton-info">
+                          <div className="skeleton-title" />
+                          <div className="skeleton-author" />
                         </div>
-                        <div className="dashboard-book-info">
-                          <h3>{book.title}</h3>
-                          <p>{book.author || 'Unknown'}</p>
-                        </div>
-                        {(book.last_cfi || book.progress_percent != null) && (
-                          <div className="dashboard-book-progress">
-                            <div
-                              className="dashboard-book-progress-fill"
-                              style={{ width: `${getProgressPercent(book)}%` }}
-                            />
-                          </div>
-                        )}
-                      </motion.div>
+                      </div>
                     ))}
                   </div>
+                ) : filteredBooks.length > 0 ? (
+                  <>
+                    {selectedBookIds.size > 0 && (
+                      <div className="bulk-actions-bar">
+                        <span className="bulk-actions-count">{selectedBookIds.size} book{selectedBookIds.size > 1 ? 's' : ''} selected</span>
+                        <div className="bulk-actions-buttons">
+                          <select
+                            className="bulk-actions-select"
+                            value=""
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === 'new-collection') {
+                                const name = prompt('New collection name');
+                                if (name) {
+                                  addCollection(name).then(async () => {
+                                    const cols = await getCollections();
+                                    const newCol = cols.find(c => c.name === name);
+                                    if (newCol) handleBulkMoveToCollection(newCol.id);
+                                  });
+                                }
+                              } else if (val) {
+                                handleBulkMoveToCollection(val);
+                              }
+                              e.target.value = '';
+                            }}
+                          >
+                            <option value="">Move to collection...</option>
+                            {collections.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                            <option value="new-collection">+ New collection</option>
+                          </select>
+                          <button className="bulk-actions-btn danger" onClick={handleBulkDelete}>
+                            <Trash2 size={14} /> Delete
+                          </button>
+                          <button className="bulk-actions-btn" onClick={clearSelection}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                    <VirtualizedBookGrid
+                      books={filteredBooks}
+                      selectedBookIds={selectedBookIds}
+                      onToggleSelect={toggleBookSelect}
+                      onSelectBook={setSelectedBook}
+                      onDelete={(book) => setShowDeleteConfirm(book.id)}
+                      onAddToCollection={(book) => setShowCollectionMenu(showCollectionMenu === book.id ? null : book.id)}
+                      onEditMetadata={(book) => setEditingBook(book)}
+                      coverErrorIds={coverErrorIds}
+                      onCoverError={(book) => {
+                        setCoverErrorIds(prev => new Set([...prev, book.id]));
+                        setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
+                        enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
+                      }}
+                      onCoverRepair={enqueueCoverRepair}
+                      getProgressPercent={getProgressPercent}
+                    />
+                  </>
                 ) : (
                   <div className="dashboard-empty">
                     <div className="dashboard-empty-icon">
@@ -478,85 +648,65 @@ function Dashboard({ onBackToLanding }) {
                 {selectedCollection ? (
                   <div className="collection-detail">
                     <header className="collection-detail-header">
-                      <button className="back-btn" onClick={() => setSelectedCollection(null)}>← All Collections</button>
+                      <button className="back-btn" onClick={() => { setSelectedCollection(null); setCollectionSearchQuery(''); }}>← All Collections</button>
                       <div className="collection-info">
                         <h2>{selectedCollection.name}</h2>
                         <p>{selectedCollection.bookIds.length} books in this collection</p>
                       </div>
                       <button
                         className="danger-outline-btn"
-                        onClick={async () => {
-                          if (confirm(`Delete collection "${selectedCollection.name}"? Books will return to library.`)) {
-                            setCollections(await removeCollection(selectedCollection.id));
-                            setSelectedCollection(null);
-                          }
-                        }}
+                        onClick={() => setShowCollectionDeleteConfirm(selectedCollection)}
                       >
                         Delete Collection
                       </button>
                     </header>
-                    <div className="dashboard-grid collection-detail-grid">
-                      {selectedCollection.bookIds.map(bid => {
-                        const book = books.find(b => b.id === bid);
-                        if (!book) return null;
-                        return (
-                          <motion.div
-                            key={book.id}
-                            className="dashboard-book-card collection-book-card"
-                            onClick={() => setSelectedBook(book)}
-                            whileHover={{ y: -6, transition: { duration: 0.2 } }}
-                          >
-                            <div className="dashboard-book-cover">
-                              {book.cover && !coverErrorIds.current.has(book.id) ? (
-                                <img
-                                  src={book.cover}
-                                  alt={book.title}
-                                  onError={() => {
-                                    coverErrorIds.current.add(book.id);
-                                    setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                                    enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
-                                  }}
-                                />
-                              ) : (
-                                <FileText size={40} color="var(--text-tertiary)" />
-                              )}
-                              <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
-                            </div>
-                            <div className="dashboard-book-info">
-                              <h3>{book.title}</h3>
-                              <p>{book.author || 'Unknown'}</p>
-                            </div>
-                            <div className="collection-book-actions" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="collection-book-action"
-                                onClick={async () => {
-                                  const ok = confirm(`Remove "${book.title}" from "${selectedCollection.name}"?`);
-                                  if (!ok) return;
-                                  await removeBookFromCollection(selectedCollection.id, book.id);
-                                  setCollections(await getCollections());
-                                  setSelectedCollection(prev => ({
-                                    ...prev,
-                                    bookIds: prev.bookIds.filter(id => id !== book.id)
-                                  }));
-                                }}
-                                title="Remove from this collection"
-                              >
-                                Remove
-                              </button>
-                              <button
-                                type="button"
-                                className="collection-book-action danger"
-                                onClick={() => setShowDeleteConfirm(book.id)}
-                                title="Delete book from library"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </motion.div>
-                        );
-                      })}
+                    <div className="dashboard-search" style={{ marginBottom: '16px' }}>
+                      <Search size={18} />
+                      <input
+                        type="text"
+                        placeholder="Search in collection..."
+                        value={collectionSearchQuery}
+                        onChange={(e) => setCollectionSearchQuery(e.target.value)}
+                        aria-label="Search in collection"
+                      />
                     </div>
+                    <DragDropCollection
+                      bookIds={selectedCollection.bookIds}
+                      books={books}
+                      collectionId={selectedCollection.id}
+                      onReorder={(newIds) => handleReorderInCollection(selectedCollection.id, newIds)}
+                      onRemoveBook={(book) => {
+                        removeBookFromCollection(selectedCollection.id, book.id).then(async () => {
+                          setCollections(await getCollections());
+                          setSelectedCollection(prev => ({
+                            ...prev,
+                            bookIds: prev.bookIds.filter(id => id !== book.id)
+                          }));
+                          addToast(
+                            `"${book.title}" removed from collection`,
+                            'info',
+                            'Undo',
+                            async () => {
+                              await addBookToCollection(selectedCollection.id, book.id);
+                              setCollections(await getCollections());
+                              setSelectedCollection(prev => ({
+                                ...prev,
+                                bookIds: [...(prev?.bookIds || []), book.id]
+                              }));
+                            }
+                          );
+                        });
+                      }}
+                      onDeleteBook={(book) => setShowDeleteConfirm(book.id)}
+                      onSelectBook={setSelectedBook}
+                      coverErrorIds={coverErrorIds}
+                      onCoverError={(book) => {
+                        setCoverErrorIds(prev => new Set([...prev, book.id]));
+                        setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
+                        enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
+                      }}
+                      searchQuery={collectionSearchQuery}
+                    />
                   </div>
                 ) : collections.length === 0 ? (
                   <div className="dashboard-empty">
@@ -593,13 +743,37 @@ function Dashboard({ onBackToLanding }) {
                           <button
                             type="button"
                             className="dashboard-collection-delete"
-                            title="Delete collection"
+                            title="Rename collection"
                             onClick={async (e) => {
                               e.stopPropagation();
-                              if (confirm(`Delete collection "${c.name}"? Books will stay in your library.`)) {
-                                setCollections(await removeCollection(c.id));
-                                if (selectedCollection?.id === c.id) setSelectedCollection(null);
+                              const newName = prompt('Rename collection', c.name);
+                              if (newName && newName !== c.name) {
+                                try {
+                                  await fetch(`${import.meta.env.VITE_API_URL || ''}/api/library-sync/collections/${c.id}`, {
+                                    method: 'PATCH',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'Authorization': `Bearer ${localStorage.getItem('audire_token') || ''}`,
+                                    },
+                                    body: JSON.stringify({ name: newName }),
+                                  });
+                                  setCollections(await getCollections());
+                                  addToast('Collection renamed', 'success');
+                                } catch (err) {
+                                  addToast('Failed to rename: ' + err.message, 'error');
+                                }
                               }
+                            }}
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="dashboard-collection-delete"
+                            title="Delete collection"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowCollectionDeleteConfirm(c);
                             }}
                           >
                             <Trash2 size={14} />
@@ -622,12 +796,12 @@ function Dashboard({ onBackToLanding }) {
                                     setSelectedBook(b);
                                   }}
                                 >
-                                  {b.cover && !coverErrorIds.current.has(b.id) ? (
+                                  {b.cover && !coverErrorIds.has(b.id) ? (
                                     <img
                                       src={b.cover}
                                       alt=""
                                       onError={() => {
-                                        coverErrorIds.current.add(b.id);
+                                        setCoverErrorIds(prev => new Set([...prev, b.id]));
                                         setBooks((prev) => prev.map((x) => (x.id === b.id ? { ...x, cover: null } : x)));
                                         enqueueCoverRepair({ ...b, cover: null }, { refreshList: true });
                                       }}
@@ -667,6 +841,17 @@ function Dashboard({ onBackToLanding }) {
                 exit={{ opacity: 0, y: -8 }}
               >
                 <SettingsPanel addToast={addToast} />
+              </motion.div>
+            )}
+
+            {activeTab === 'stats' && (
+              <motion.div
+                key="stats"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+              >
+                <StatsDashboard addToast={addToast} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -758,6 +943,39 @@ function Dashboard({ onBackToLanding }) {
           document.body
         );
       })()}
+
+      {showCollectionDeleteConfirm && createPortal(
+        <div className="delete-modal-overlay" onClick={() => setShowCollectionDeleteConfirm(null)} role="presentation">
+          <div className="delete-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="collection-delete-title">
+            <p id="collection-delete-title">Delete collection "{showCollectionDeleteConfirm.name}"? Books will stay in your library.</p>
+            <div className="delete-modal-actions">
+              <button type="button" onClick={() => setShowCollectionDeleteConfirm(null)}>Cancel</button>
+              <button
+                type="button"
+                className="danger"
+                onClick={async () => {
+                  setCollections(await removeCollection(showCollectionDeleteConfirm.id));
+                  if (selectedCollection?.id === showCollectionDeleteConfirm.id) setSelectedCollection(null);
+                  setShowCollectionDeleteConfirm(null);
+                  addToast('Collection deleted', 'success');
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {editingBook && (
+        <MetadataEditor
+          book={editingBook}
+          onClose={() => setEditingBook(null)}
+          onUpdated={loadBooks}
+          addToast={addToast}
+        />
+      )}
     </div>
   );
 }
@@ -768,7 +986,10 @@ function SettingsPanel({ addToast }) {
   useEffect(() => {
     ttsManager.setSpeed(settings.speed);
     ttsManager.setEdgeTtsVoice(settings.edgeTtsVoice);
-  }, [settings.speed, settings.edgeTtsVoice]);
+    if (settings.pronunciationDict) {
+      setCustomPronunciations(settings.pronunciationDict);
+    }
+  }, [settings.speed, settings.edgeTtsVoice, settings.pronunciationDict]);
 
   const update = (key, value) => {
     const next = { ...settings, [key]: value };
@@ -776,6 +997,7 @@ function SettingsPanel({ addToast }) {
     saveSettings(next);
     if (key === 'speed') ttsManager.setSpeed(value);
     if (key === 'edgeTtsVoice') ttsManager.setEdgeTtsVoice(value);
+    if (key === 'pronunciationDict') setCustomPronunciations(value);
     addToast('Settings saved', 'success');
   };
 
@@ -827,6 +1049,34 @@ function SettingsPanel({ addToast }) {
       <div className="dashboard-settings-card">
         <h3>Reader appearance</h3>
         <div className="dashboard-settings-row">
+          <label>Layout</label>
+          <select
+            value={settings.layout || 'single'}
+            onChange={(e) => update('layout', e.target.value)}
+            className="dashboard-settings-select"
+          >
+            <option value="single">Single Page</option>
+            <option value="dual">Dual Page (Spread)</option>
+          </select>
+        </div>
+        <div className="dashboard-settings-row">
+          <label>Font Family</label>
+          <select
+            value={settings.fontFamily || 'System'}
+            onChange={(e) => update('fontFamily', e.target.value)}
+            className="dashboard-settings-select"
+          >
+            <option value="System">System Default</option>
+            <option value="Arial, sans-serif">Arial</option>
+            <option value="Georgia, serif">Georgia</option>
+            <option value="'Times New Roman', serif">Times New Roman</option>
+            <option value="'OpenDyslexic', sans-serif">OpenDyslexic</option>
+            <option value="'Noto Sans', sans-serif">Noto Sans</option>
+            <option value="'Noto Serif', serif">Noto Serif</option>
+            <option value="'Courier New', monospace">Courier New</option>
+          </select>
+        </div>
+        <div className="dashboard-settings-row">
           <label>Font size</label>
           <input
             type="number"
@@ -847,6 +1097,47 @@ function SettingsPanel({ addToast }) {
             onChange={(e) => update('lineHeight', parseFloat(e.target.value) || 1.6)}
           />
         </div>
+        <div className="dashboard-settings-row">
+          <label>Paragraph spacing (rem)</label>
+          <input
+            type="number"
+            min="0"
+            max="2"
+            step="0.1"
+            value={settings.paragraphSpacing !== undefined ? settings.paragraphSpacing : 0.5}
+            onChange={(e) => update('paragraphSpacing', parseFloat(e.target.value) || 0)}
+          />
+        </div>
+        <div className="dashboard-settings-row">
+          <label>Side Margins (rem)</label>
+          <input
+            type="number"
+            min="0"
+            max="10"
+            step="0.5"
+            value={settings.margin !== undefined ? settings.margin : 1.0}
+            onChange={(e) => update('margin', parseFloat(e.target.value) || 0)}
+          />
+        </div>
+      </div>
+      <div className="dashboard-settings-card">
+        <h3>Pronunciation Dictionary</h3>
+        <p className="dashboard-settings-hint">Define custom word pronunciations for TTS (one per line: <code>word=pronunciation</code>)</p>
+        <textarea
+          className="dashboard-settings-textarea"
+          value={JSON.stringify(settings.pronunciationDict || {}, null, 2)}
+          onChange={(e) => {
+            try {
+              const dict = JSON.parse(e.target.value);
+              update('pronunciationDict', dict);
+              setCustomPronunciations(dict);
+            } catch {
+              // Ignore invalid JSON
+            }
+          }}
+          rows={6}
+          placeholder='{&#10;  "Audire": "aw-deer-ray",&#10;  "TTS": "tee-tee-ess"&#10;}'
+        />
       </div>
       <div className="dashboard-settings-card">
         <h3>Storage</h3>

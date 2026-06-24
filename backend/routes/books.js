@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
+import { authenticate } from '../middleware/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
 // Supabase is now fully removed, using Neon + Local Storage
@@ -109,11 +110,12 @@ async function coverFileExists(bookId) {
   return files.some((f) => f.startsWith(bookId) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
 }
 
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const { rows } = await query(
-      `SELECT ${BOOK_COLS} FROM books ORDER BY added_at DESC`
+      `SELECT ${BOOK_COLS} FROM books WHERE user_id = $1 ORDER BY added_at DESC`,
+      [req.user.id]
     );
     res.json(rows.map(b => normalizeBookUrls(b, baseUrl)));
   } catch (err) {
@@ -122,10 +124,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticate, async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
-    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     let book = rows[0];
     if (book.cover && !(await coverFileExists(book.id))) {
@@ -139,7 +141,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', upload.single('file'), async (req, res) => {
+router.post('/', authenticate, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -171,8 +173,8 @@ router.post('/', upload.single('file'), async (req, res) => {
     // Try to check for duplicates using file_hash (only works if column exists)
     try {
       const { rows: existingBooks } = await query(
-        'SELECT id, added_at FROM books WHERE file_hash = $1 ORDER BY added_at ASC',
-        [fileHash]
+        'SELECT id, added_at FROM books WHERE file_hash = $1 AND user_id = $2 ORDER BY added_at ASC',
+        [fileHash, req.user.id]
       );
 
       // Delete any older duplicate books with the same file hash
@@ -198,13 +200,13 @@ router.post('/', upload.single('file'), async (req, res) => {
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
 
-    // Try to INSERT with binary data
     try {
       await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+        `INSERT INTO books (id, user_id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
         [
           bookData.id,
+          req.user.id,
           bookData.title,
           bookData.author || null,
           coverUrl,
@@ -218,10 +220,11 @@ router.post('/', upload.single('file'), async (req, res) => {
     } catch (insertErr) {
       // Fallback for older schemas without binary columns
       await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        `INSERT INTO books (id, user_id, title, author, cover, file_url, format, file_hash, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
         [
           bookData.id,
+          req.user.id,
           bookData.title,
           bookData.author || null,
           coverUrl,
@@ -232,7 +235,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       );
     }
 
-    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [bookData.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1 AND user_id = $2`, [bookData.id, req.user.id]);
     res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
   } catch (err) {
     console.error('Upload book error:', err);
@@ -278,11 +281,11 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-router.get('/:id/file', async (req, res) => {
+router.get('/:id/file', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     // 1. Try serving from Database first (New Neon Storage)
-    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1', [id]);
+    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1 AND user_id = $2', [id, req.user.id]);
     if (rows.length > 0 && rows[0].file_data) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
       const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
@@ -393,14 +396,14 @@ router.post('/:id/repair-cover', async (req, res) => {
   }
 });
 
-router.patch('/:id/progress', async (req, res) => {
+router.patch('/:id/progress', authenticate, async (req, res) => {
   try {
     const { last_cfi, progress_percent, total_pages } = req.body;
     await query(
       `UPDATE books SET last_cfi = COALESCE($2, last_cfi), last_read = now(),
        progress_percent = COALESCE($3, progress_percent), total_pages = COALESCE($4, total_pages)
-       WHERE id = $1`,
-      [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null]
+       WHERE id = $1 AND user_id = $5`,
+      [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null, req.user.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -409,9 +412,88 @@ router.patch('/:id/progress', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.patch('/:id/metadata', authenticate, async (req, res) => {
   try {
-    const { rows } = await query('SELECT format FROM books WHERE id = $1', [req.params.id]);
+    const { title, author } = req.body;
+    if (!title && !author) {
+      return res.status(400).json({ error: 'title or author is required' });
+    }
+    const { rows } = await query(
+      `UPDATE books SET title = COALESCE($2, title), author = COALESCE($3, author)
+       WHERE id = $1 AND user_id = $4 RETURNING id, title, author, cover, file_url, format, added_at`,
+      [req.params.id, title || null, author || null, req.user.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Book not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Update metadata error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:id/cover', authenticate, multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, COVERS_DIR),
+    filename: (req, file, cb) => cb(null, `${req.params.id}${path.extname(file.originalname || '.jpg')}`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = (file.originalname || '').toLowerCase();
+    if (/\.(jpg|jpeg|png|gif|webp)$/.test(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files allowed (jpg, png, gif, webp)'));
+    }
+  },
+}).single('cover'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const baseUrl = getBaseUrl(req);
+    const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
+    const coverBuffer = await fs.readFile(req.file.path);
+    await query(
+      'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1 AND user_id = $4',
+      [req.params.id, coverUrl, coverBuffer, req.user.id]
+    );
+    res.json({ cover: coverUrl });
+  } catch (err) {
+    console.error('Upload cover error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/search-metadata', authenticate, async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title || typeof title !== 'string' || title.trim().length < 2) {
+      return res.status(400).json({ error: 'title (min 2 chars) is required' });
+    }
+    const response = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(title.trim())}&maxResults=5`
+    );
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Google Books API request failed' });
+    }
+    const data = await response.json();
+    const results = (data.items || []).map((item) => ({
+      title: item.volumeInfo?.title || '',
+      author: (item.volumeInfo?.authors || []).join(', '),
+      cover: item.volumeInfo?.imageLinks?.thumbnail || null,
+      description: item.volumeInfo?.description || '',
+    }));
+    res.json(results);
+  } catch (err) {
+    console.error('Search metadata error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    const { rows } = await query('SELECT format FROM books WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Book not found' });
     if (rows.length) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
       const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
@@ -423,7 +505,7 @@ router.delete('/:id', async (req, res) => {
         await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => { });
       }
     }
-    await query('DELETE FROM books WHERE id = $1', [req.params.id]);
+    await query('DELETE FROM books WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Delete book error:', err);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layers, Loader2, X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Layers, Loader2, X, ChevronRight, ChevronLeft, Download } from 'lucide-react';
 import { useAI } from '../context/AIContext';
 
 export default function FlashcardsPanel({ text, getChapterText, onClose }) {
@@ -66,6 +66,10 @@ export default function FlashcardsPanel({ text, getChapterText, onClose }) {
             <div
               className="flashcard"
               onClick={() => setFlipped(!flipped)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFlipped(!flipped); } }}
+              aria-label={`Flashcard: ${flipped ? 'showing answer' : 'showing question'}. Click to flip.`}
             >
               <div className="flashcard-inner">
                 <p className="flashcard-text">{flipped ? card.back : card.front}</p>
@@ -99,6 +103,30 @@ export default function FlashcardsPanel({ text, getChapterText, onClose }) {
               {generating ? <Loader2 size={16} className="spin" /> : null}
               <span>{generating ? 'Regenerating...' : 'Regenerate'}</span>
             </button>
+            {cards.length > 0 && (
+              <button
+                type="button"
+                className="flashcards-regenerate"
+                onClick={() => {
+                  const lines = cards.map(c => {
+                    const front = (c.front || '').replace(/"/g, '""');
+                    const back = (c.back || '').replace(/"/g, '""');
+                    return `"${front}","${back}"`;
+                  });
+                  const csv = '\uFEFF' + lines.join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'audire_flashcards.csv';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                <Download size={16} />
+                <span>Export to Anki CSV</span>
+              </button>
+            )}
           </>
         )}
       </div>

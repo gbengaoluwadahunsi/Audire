@@ -6,10 +6,14 @@ const DEFAULTS = {
   edgeTtsVoice: 'en-US-AvaMultilingualNeural',
   speed: 1.0,
   fontSize: 15,
+  fontFamily: 'System',
   lineHeight: 1.6,
+  margin: 1.0,
+  layout: 'single',
   theme: 'dark',
   librarySort: 'last_read',
   librarySortOrder: 'desc',
+  pronunciationDict: [], // Array of { word: string, replacement: string }
 };
 
 export function getSettings() {

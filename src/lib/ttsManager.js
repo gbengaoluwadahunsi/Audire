@@ -87,14 +87,43 @@ class TTSManager {
     return this._audioCtx;
   }
 
+  _setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.setActionHandler('play', () => this.resume());
+    navigator.mediaSession.setActionHandler('pause', () => this.pause());
+    navigator.mediaSession.setActionHandler('previoustrack', () => {});
+    navigator.mediaSession.setActionHandler('nexttrack', () => {});
+    navigator.mediaSession.setActionHandler('seekbackward', () => {});
+    navigator.mediaSession.setActionHandler('seekforward', () => {});
+    navigator.mediaSession.setActionHandler('seekto', () => {});
+  }
+
+  setMediaMetadata({ title, author, cover }) {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'Audire',
+      artist: author || 'Unknown',
+      album: 'Audire Library',
+      artwork: cover ? [{ src: cover, sizes: '512x512', type: 'image/png' }] : [],
+    });
+    this._setupMediaSession();
+  }
+
+  clearMediaMetadata() {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = null;
+  }
+
   pause() {
     this.isPaused = true;
     this._audioCtx?.suspend().catch(() => { });
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
   }
 
   resume() {
     this.isPaused = false;
     this._audioCtx?.resume().catch(() => { });
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   }
 
   async _waitIfPaused(sessionId) {
@@ -137,6 +166,9 @@ class TTSManager {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.volume = this.volume ?? 1;
+
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
     return new Promise((resolve) => {
       audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
       audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
@@ -170,11 +202,15 @@ class TTSManager {
     return promise;
   }
 
-  async speakContinuous(textChunks, onChunkComplete, sessionId) {
+  async speakContinuous(textChunks, onChunkComplete, sessionId, metadata = {}) {
     if (sessionId) this.currentSessionId = sessionId;
     this._stopped = false;
     this.isPaused = false;
     this._failureCount = 0;
+
+    if (metadata.title || metadata.author || metadata.cover) {
+      this.setMediaMetadata(metadata);
+    }
 
     const ctx = this._getAudioCtx();
     if (ctx.state === 'suspended') await ctx.resume().catch(() => { });
@@ -189,6 +225,8 @@ class TTSManager {
 
     const runLoop = async () => {
       if (currentIndex >= textChunks.length || this._stopped) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+        this.clearMediaMetadata();
         return;
       }
 
@@ -246,6 +284,8 @@ class TTSManager {
       source.connect(this._gainNode);
       this._currentSource = source;
 
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
       const now = ctx.currentTime;
       const startAt = (nextStartTime === null || nextStartTime < now + 0.05)
         ? now + 0.05
@@ -282,8 +322,11 @@ class TTSManager {
   stop() {
     this._stopped = true;
     this.isPaused = false;
-    try { this._currentSource?.stop(0); } catch { }
+    try { this._currentSource?.stop(0); } catch { /* ignore */ }
     this._currentSource = null;
+    this._currentAudio = null;
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+    this.clearMediaMetadata();
     if (this._currentAudio) {
       this._currentAudio.pause();
       this._currentAudio.src = '';

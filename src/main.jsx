@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { PlaybackProvider } from './context/PlaybackContext'
 import { AIProvider } from './context/AIContext'
 
+
 if ('serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
     window.addEventListener('load', () => {

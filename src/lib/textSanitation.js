@@ -22,6 +22,24 @@ const ABBREVIATIONS = {
   'p\\.': 'page',
 };
 
+let customPronunciations = {};
+
+export function setCustomPronunciations(dict) {
+  customPronunciations = dict || {};
+}
+
+export function applyCustomPronunciations(text) {
+  if (!text || Object.keys(customPronunciations).length === 0) return text;
+  let result = text;
+  Object.entries(customPronunciations).forEach(([word, replacement]) => {
+    if (!word || !replacement) return;
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    result = result.replace(regex, replacement);
+  });
+  return result;
+}
+
 /**
  * Normalizes text, expands abbreviations, and joins hard-wrapped lines.
  * Optimized for natural TTS flow.
@@ -72,11 +90,14 @@ export const sanitizeTextForTTS = (text) => {
     sanitized = sanitized.replace(regex, expansion);
   });
 
-  // 6. Fix initials (e.g., "E. B. White" -> "E B White")
+  // 6. Apply Custom Pronunciations
+  sanitized = applyCustomPronunciations(sanitized);
+
+  // 7. Fix initials (e.g., "E. B. White" -> "E B White")
   // Prevents "E dot B dot"
   sanitized = sanitized.replace(/([A-Z])\.\s*(?=[A-Z])/g, '$1 ');
 
-  // 7. Cleanup remaining artifacts
+  // 8. Cleanup remaining artifacts
   sanitized = sanitized
     .replace(/\[\d+\]/g, '') // Remove citations [1], [2]
     .replace(/\s+/g, ' ')    // Collapse whitespace one last time

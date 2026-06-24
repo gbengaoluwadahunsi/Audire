@@ -1,9 +1,19 @@
 -- Run this in Neon SQL Editor (Dashboard → SQL Editor) to create tables
 -- https://neon.tech
 
+-- Users table for Authentication
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text UNIQUE NOT NULL,
+  password_hash text NOT NULL,
+  name text,
+  created_at timestamptz DEFAULT now()
+);
+
 -- Audire books table for Neon PostgreSQL
 CREATE TABLE IF NOT EXISTS books (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   title text NOT NULL,
   author text,
   cover text,
@@ -25,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_books_file_hash ON books(file_hash);
 -- Bookmarks, highlights, collections (synced via /api/library-sync)
 CREATE TABLE IF NOT EXISTS user_bookmarks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   book_id uuid NOT NULL REFERENCES books(id) ON DELETE CASCADE,
   cfi text NOT NULL,
   snippet text,
@@ -34,6 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_user_bookmarks_book ON user_bookmarks(book_id);
 
 CREATE TABLE IF NOT EXISTS user_highlights (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   book_id uuid NOT NULL REFERENCES books(id) ON DELETE CASCADE,
   cfi text NOT NULL,
   body text,
@@ -44,6 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_user_highlights_book ON user_highlights(book_id);
 
 CREATE TABLE IF NOT EXISTS user_collections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   name text NOT NULL,
   sort_order int DEFAULT 0,
   created_at timestamptz DEFAULT now()
@@ -56,6 +69,19 @@ CREATE TABLE IF NOT EXISTS user_collection_books (
   PRIMARY KEY (collection_id, book_id)
 );
 CREATE INDEX IF NOT EXISTS idx_user_collection_books_order ON user_collection_books(collection_id, position);
+
+-- Reading sessions for analytics
+CREATE TABLE IF NOT EXISTS reading_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  book_id uuid REFERENCES books(id) ON DELETE SET NULL,
+  started_at timestamptz DEFAULT now(),
+  ended_at timestamptz,
+  duration_seconds integer DEFAULT 0,
+  pages_read integer DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_reading_sessions_user ON reading_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_reading_sessions_started ON reading_sessions(started_at DESC);
 
 -- Optional: backfill so "Last read" sort has a timestamp for books never PATCHed (run once in Neon SQL)
 -- UPDATE books SET last_read = added_at WHERE last_read IS NULL;
