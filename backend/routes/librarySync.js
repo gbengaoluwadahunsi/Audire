@@ -1,11 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
-
-// Apply auth to all library sync routes
-router.use(authenticate);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,8 +30,8 @@ router.get('/bookmarks/:bookId', async (req, res) => {
     const { bookId } = req.params;
     if (!UUID.test(bookId)) return res.status(400).json({ error: 'Invalid book id' });
     const { rows } = await query(
-      'SELECT id, cfi, snippet, created_at FROM user_bookmarks WHERE book_id = $1 AND user_id = $2 ORDER BY created_at ASC',
-      [bookId, req.user.id]
+      'SELECT id, cfi, snippet, created_at FROM user_bookmarks WHERE book_id = $1 ORDER BY created_at ASC',
+      [bookId]
     );
     res.json(rows.map(mapBookmark));
   } catch (err) {
@@ -53,9 +49,9 @@ router.post('/bookmarks/:bookId', async (req, res) => {
     if (!cfi || typeof cfi !== 'string') return res.status(400).json({ error: 'cfi required' });
     const snippet = typeof text === 'string' ? text.slice(0, 500) : '';
     const { rows } = await query(
-      `INSERT INTO user_bookmarks (book_id, user_id, cfi, snippet) VALUES ($1, $2, $3, $4)
+      `INSERT INTO user_bookmarks (book_id, cfi, snippet) VALUES ($1, $2, $3)
        RETURNING id, cfi, snippet, created_at`,
-      [bookId, req.user.id, cfi, snippet]
+      [bookId, cfi, snippet]
     );
     res.status(201).json(mapBookmark(rows[0]));
   } catch (err) {
@@ -69,7 +65,7 @@ router.delete('/bookmarks/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'Invalid id' });
-    await query('DELETE FROM user_bookmarks WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    await query('DELETE FROM user_bookmarks WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('librarySync bookmarks DELETE:', err);
@@ -83,8 +79,8 @@ router.get('/highlights/:bookId', async (req, res) => {
     const { bookId } = req.params;
     if (!UUID.test(bookId)) return res.status(400).json({ error: 'Invalid book id' });
     const { rows } = await query(
-      'SELECT id, cfi, body, color, created_at FROM user_highlights WHERE book_id = $1 AND user_id = $2 ORDER BY created_at ASC',
-      [bookId, req.user.id]
+      'SELECT id, cfi, body, color, created_at FROM user_highlights WHERE book_id = $1 ORDER BY created_at ASC',
+      [bookId]
     );
     res.json(rows.map(mapHighlight));
   } catch (err) {
@@ -102,9 +98,9 @@ router.post('/highlights/:bookId', async (req, res) => {
     if (!cfi || typeof cfi !== 'string') return res.status(400).json({ error: 'cfi required' });
     const body = typeof text === 'string' ? text.slice(0, 2000) : '';
     const { rows } = await query(
-      `INSERT INTO user_highlights (book_id, user_id, cfi, body, color) VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO user_highlights (book_id, cfi, body, color) VALUES ($1, $2, $3, $4)
        RETURNING id, cfi, body, color, created_at`,
-      [bookId, req.user.id, cfi, body, String(color).slice(0, 32)]
+      [bookId, cfi, body, String(color).slice(0, 32)]
     );
     res.status(201).json(mapHighlight(rows[0]));
   } catch (err) {
@@ -121,8 +117,8 @@ router.patch('/highlights/:id', async (req, res) => {
     const { color } = req.body || {};
     if (!color) return res.status(400).json({ error: 'color required' });
     const { rows } = await query(
-      'UPDATE user_highlights SET color = $2 WHERE id = $1 AND user_id = $3 RETURNING id, cfi, body, color, created_at',
-      [id, String(color).slice(0, 32), req.user.id]
+      'UPDATE user_highlights SET color = $2 WHERE id = $1 RETURNING id, cfi, body, color, created_at',
+      [id, String(color).slice(0, 32)]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(mapHighlight(rows[0]));
@@ -137,7 +133,7 @@ router.delete('/highlights/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'Invalid id' });
-    await query('DELETE FROM user_highlights WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    await query('DELETE FROM user_highlights WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('librarySync highlights DELETE:', err);
@@ -149,8 +145,7 @@ router.delete('/highlights/:id', async (req, res) => {
 router.get('/collections', async (req, res) => {
   try {
     const { rows: cols } = await query(
-      'SELECT id, name, sort_order, created_at FROM user_collections WHERE user_id = $1 ORDER BY sort_order ASC, created_at ASC',
-      [req.user.id]
+      'SELECT id, name, sort_order, created_at FROM user_collections ORDER BY sort_order ASC, created_at ASC'
     );
     const out = [];
     for (const c of cols) {
@@ -176,11 +171,11 @@ router.post('/collections', async (req, res) => {
   try {
     const { name } = req.body || {};
     if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name required' });
-    const { rows: mx } = await query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM user_collections WHERE user_id = $1', [req.user.id]);
+    const { rows: mx } = await query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM user_collections');
     const nextOrder = (mx[0]?.m ?? -1) + 1;
     const { rows } = await query(
-      'INSERT INTO user_collections (user_id, name, sort_order) VALUES ($1, $2, $3) RETURNING id, name, sort_order, created_at',
-      [req.user.id, name.trim().slice(0, 200), nextOrder]
+      'INSERT INTO user_collections (name, sort_order) VALUES ($1, $2) RETURNING id, name, sort_order, created_at',
+      [name.trim().slice(0, 200), nextOrder]
     );
     res.status(201).json({ id: rows[0].id, name: rows[0].name, bookIds: [] });
   } catch (err) {
@@ -197,8 +192,8 @@ router.patch('/collections/:id', async (req, res) => {
     const { name } = req.body || {};
     if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name required' });
     const { rows } = await query(
-      'UPDATE user_collections SET name = $2 WHERE id = $1 AND user_id = $3 RETURNING id, name',
-      [id, name.trim().slice(0, 200), req.user.id]
+      'UPDATE user_collections SET name = $2 WHERE id = $1 RETURNING id, name',
+      [id, name.trim().slice(0, 200)]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const { rows: books } = await query(
@@ -217,7 +212,7 @@ router.delete('/collections/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'Invalid id' });
-    await query('DELETE FROM user_collections WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    await query('DELETE FROM user_collections WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('librarySync collections DELETE:', err);
@@ -234,7 +229,7 @@ router.post('/collections/:id/books', async (req, res) => {
     if (!bookId || typeof bookId !== 'string' || !UUID.test(bookId)) {
       return res.status(400).json({ error: 'bookId required' });
     }
-    const { rows: authCheck } = await query('SELECT id FROM user_collections WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    const { rows: authCheck } = await query('SELECT id FROM user_collections WHERE id = $1', [id]);
     if (authCheck.length === 0) return res.status(404).json({ error: 'Collection not found' });
     
     const { rows: maxRow } = await query(
@@ -265,7 +260,7 @@ router.delete('/collections/:collectionId/books/:bookId', async (req, res) => {
     if (!UUID.test(collectionId) || !UUID.test(bookId)) {
       return res.status(400).json({ error: 'Invalid id' });
     }
-    const { rows: authCheck } = await query('SELECT id FROM user_collections WHERE id = $1 AND user_id = $2', [collectionId, req.user.id]);
+    const { rows: authCheck } = await query('SELECT id FROM user_collections WHERE id = $1', [collectionId]);
     if (authCheck.length === 0) return res.status(404).json({ error: 'Collection not found' });
 
     await query(

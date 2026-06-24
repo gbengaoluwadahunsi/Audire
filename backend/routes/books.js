@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
-import { authenticate } from '../middleware/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
 // Supabase is now fully removed, using Neon + Local Storage
@@ -110,12 +109,11 @@ async function coverFileExists(bookId) {
   return files.some((f) => f.startsWith(bookId) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
 }
 
-router.get('/', authenticate, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const { rows } = await query(
-      `SELECT ${BOOK_COLS} FROM books WHERE user_id = $1 ORDER BY added_at DESC`,
-      [req.user.id]
+      `SELECT ${BOOK_COLS} FROM books ORDER BY added_at DESC`
     );
     res.json(rows.map(b => normalizeBookUrls(b, baseUrl)));
   } catch (err) {
@@ -124,10 +122,10 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
-    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     let book = rows[0];
     if (book.cover && !(await coverFileExists(book.id))) {
@@ -141,7 +139,7 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-router.post('/', authenticate, upload.single('file'), async (req, res) => {
+router.post('/', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -170,25 +168,21 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
       try { coverBuffer = await fs.readFile(coverPath); } catch { }
     }
 
-    // Try to check for duplicates using file_hash (only works if column exists)
+    // Try to check for duplicates using file_hash
     try {
       const { rows: existingBooks } = await query(
-        'SELECT id, added_at FROM books WHERE file_hash = $1 AND user_id = $2 ORDER BY added_at ASC',
-        [fileHash, req.user.id]
+        'SELECT id, added_at FROM books WHERE file_hash = $1 ORDER BY added_at ASC',
+        [fileHash]
       );
 
-      // Delete any older duplicate books with the same file hash
       for (const existingBook of existingBooks) {
         console.log(`Deleting duplicate book ${existingBook.id}, keeping newer upload`);
         await query('DELETE FROM books WHERE id = $1', [existingBook.id]);
-        // Also delete the associated book file if it exists
         const bookFilePath = path.join(BOOKS_DIR, `${existingBook.id}${bookData.format === 'pdf' ? '.pdf' : '.epub'}`);
         await fs.unlink(bookFilePath).catch(() => { });
       }
     } catch (hashErr) {
-      // file_hash column doesn't exist yet - that's OK, duplicate detection will work once schema is updated
       if (hashErr.code === '42703') {
-        // Column not found error, silently continue
         console.log('file_hash column not yet in database, skipping duplicate detection');
       } else {
         throw hashErr;
@@ -202,11 +196,10 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
 
     try {
       await query(
-        `INSERT INTO books (id, user_id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
         [
           bookData.id,
-          req.user.id,
           bookData.title,
           bookData.author || null,
           coverUrl,
@@ -220,11 +213,10 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
     } catch (insertErr) {
       // Fallback for older schemas without binary columns
       await query(
-        `INSERT INTO books (id, user_id, title, author, cover, file_url, format, file_hash, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
         [
           bookData.id,
-          req.user.id,
           bookData.title,
           bookData.author || null,
           coverUrl,
@@ -235,7 +227,7 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
       );
     }
 
-    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1 AND user_id = $2`, [bookData.id, req.user.id]);
+    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [bookData.id]);
     res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
   } catch (err) {
     console.error('Upload book error:', err);
@@ -281,11 +273,11 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-router.get('/:id/file', authenticate, async (req, res) => {
+router.get('/:id/file', async (req, res) => {
   try {
     const { id } = req.params;
     // 1. Try serving from Database first (New Neon Storage)
-    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1', [id]);
     if (rows.length > 0 && rows[0].file_data) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
       const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
@@ -296,7 +288,6 @@ router.get('/:id/file', authenticate, async (req, res) => {
     if (!rows.length) return res.status(404).send('Book not found');
 
     // 2. Fallback to local disk
-
     const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
     const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
     try {
@@ -396,14 +387,14 @@ router.post('/:id/repair-cover', async (req, res) => {
   }
 });
 
-router.patch('/:id/progress', authenticate, async (req, res) => {
+router.patch('/:id/progress', async (req, res) => {
   try {
     const { last_cfi, progress_percent, total_pages } = req.body;
     await query(
       `UPDATE books SET last_cfi = COALESCE($2, last_cfi), last_read = now(),
        progress_percent = COALESCE($3, progress_percent), total_pages = COALESCE($4, total_pages)
-       WHERE id = $1 AND user_id = $5`,
-      [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null, req.user.id]
+       WHERE id = $1`,
+      [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -412,7 +403,7 @@ router.patch('/:id/progress', authenticate, async (req, res) => {
   }
 });
 
-router.patch('/:id/metadata', authenticate, async (req, res) => {
+router.patch('/:id/metadata', async (req, res) => {
   try {
     const { title, author } = req.body;
     if (!title && !author) {
@@ -420,8 +411,8 @@ router.patch('/:id/metadata', authenticate, async (req, res) => {
     }
     const { rows } = await query(
       `UPDATE books SET title = COALESCE($2, title), author = COALESCE($3, author)
-       WHERE id = $1 AND user_id = $4 RETURNING id, title, author, cover, file_url, format, added_at`,
-      [req.params.id, title || null, author || null, req.user.id]
+       WHERE id = $1 RETURNING id, title, author, cover, file_url, format, added_at`,
+      [req.params.id, title || null, author || null]
     );
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
     res.json(rows[0]);
@@ -431,7 +422,7 @@ router.patch('/:id/metadata', authenticate, async (req, res) => {
   }
 });
 
-router.post('/:id/cover', authenticate, multer({
+router.post('/:id/cover', multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, COVERS_DIR),
     filename: (req, file, cb) => cb(null, `${req.params.id}${path.extname(file.originalname || '.jpg')}`),
@@ -454,8 +445,8 @@ router.post('/:id/cover', authenticate, multer({
     const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
     const coverBuffer = await fs.readFile(req.file.path);
     await query(
-      'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1 AND user_id = $4',
-      [req.params.id, coverUrl, coverBuffer, req.user.id]
+      'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1',
+      [req.params.id, coverUrl, coverBuffer]
     );
     res.json({ cover: coverUrl });
   } catch (err) {
@@ -464,7 +455,7 @@ router.post('/:id/cover', authenticate, multer({
   }
 });
 
-router.post('/search-metadata', authenticate, async (req, res) => {
+router.post('/search-metadata', async (req, res) => {
   try {
     const { title } = req.body;
     if (!title || typeof title !== 'string' || title.trim().length < 2) {
@@ -490,9 +481,9 @@ router.post('/search-metadata', authenticate, async (req, res) => {
   }
 });
 
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const { rows } = await query('SELECT format FROM books WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    const { rows } = await query('SELECT format FROM books WHERE id = $1', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Book not found' });
     if (rows.length) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
@@ -505,7 +496,7 @@ router.delete('/:id', authenticate, async (req, res) => {
         await fs.unlink(path.join(COVERS_DIR, `${req.params.id}${e}`)).catch(() => { });
       }
     }
-    await query('DELETE FROM books WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    await query('DELETE FROM books WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error('Delete book error:', err);

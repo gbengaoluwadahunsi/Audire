@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
-router.use(authenticate);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -12,8 +10,8 @@ router.post('/session/start', async (req, res) => {
     const { bookId } = req.body || {};
     if (bookId && !UUID.test(bookId)) return res.status(400).json({ error: 'Invalid bookId' });
     const { rows } = await query(
-      `INSERT INTO reading_sessions (user_id, book_id) VALUES ($1, $2) RETURNING id, started_at`,
-      [req.user.id, bookId || null]
+      `INSERT INTO reading_sessions (book_id) VALUES ($1) RETURNING id, started_at`,
+      [bookId || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -30,9 +28,9 @@ router.patch('/session/:id/end', async (req, res) => {
     const { rows } = await query(
       `UPDATE reading_sessions SET ended_at = now(),
        duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1
        RETURNING id, started_at, ended_at, duration_seconds`,
-      [id, req.user.id]
+      [id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Session not found' });
     if (typeof pagesRead === 'number' && pagesRead >= 0) {
@@ -57,8 +55,8 @@ router.get('/summary', async (req, res) => {
          COUNT(*) as total_sessions,
          COUNT(DISTINCT date(started_at)) as active_days
        FROM reading_sessions
-       WHERE user_id = $1 AND started_at >= $2`,
-      [req.user.id, since]
+       WHERE started_at >= $1`,
+      [since]
     );
 
     const { rows: dailyStats } = await query(
@@ -68,18 +66,18 @@ router.get('/summary', async (req, res) => {
          COALESCE(SUM(pages_read), 0) as pages,
          COUNT(*) as sessions
        FROM reading_sessions
-       WHERE user_id = $1 AND started_at >= $2
+       WHERE started_at >= $1
        GROUP BY date(started_at)
        ORDER BY day DESC`,
-      [req.user.id, since]
+      [since]
     );
 
     const { rows: streakData } = await query(
       `SELECT DISTINCT date(started_at) as day
        FROM reading_sessions
-       WHERE user_id = $1 AND started_at >= $2
+       WHERE started_at >= $1
        ORDER BY day DESC`,
-      [req.user.id, since]
+      [since]
     );
 
     let streak = 0;
