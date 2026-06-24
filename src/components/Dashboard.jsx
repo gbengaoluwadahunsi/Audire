@@ -837,7 +837,7 @@ function Dashboard({ onBackToLanding }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
               >
-                <SettingsPanel addToast={addToast} />
+                <SettingsPanel />
               </motion.div>
             )}
 
@@ -977,8 +977,12 @@ function Dashboard({ onBackToLanding }) {
   );
 }
 
-function SettingsPanel({ addToast }) {
+function SettingsPanel() {
   const [settings, setSettings] = useState(getSettings);
+  const [numberDrafts, setNumberDrafts] = useState({});
+  const [pronunciationText, setPronunciationText] = useState(
+    () => JSON.stringify(getSettings().pronunciationDict || {}, null, 2)
+  );
 
   useEffect(() => {
     ttsManager.setSpeed(settings.speed);
@@ -988,14 +992,47 @@ function SettingsPanel({ addToast }) {
     }
   }, [settings.speed, settings.edgeTtsVoice, settings.pronunciationDict]);
 
-  const update = (key, value) => {
-    const next = { ...settings, [key]: value };
+  const persist = (next) => {
     setSettings(next);
     saveSettings(next);
-    if (key === 'speed') ttsManager.setSpeed(value);
-    if (key === 'edgeTtsVoice') ttsManager.setEdgeTtsVoice(value);
-    if (key === 'pronunciationDict') setCustomPronunciations(value);
-    addToast('Settings saved', 'success');
+  };
+
+  const update = (key, value) => {
+    persist({ ...settings, [key]: value });
+  };
+
+  const numberValue = (key, fallback) => {
+    if (numberDrafts[key] !== undefined) return numberDrafts[key];
+    const value = settings[key];
+    return value !== undefined ? String(value) : String(fallback);
+  };
+
+  const handleNumberChange = (key, raw) => {
+    setNumberDrafts((prev) => ({ ...prev, [key]: raw }));
+  };
+
+  const commitNumber = (key, fallback, parser = parseFloat) => {
+    const raw = numberDrafts[key];
+    setNumberDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (raw === undefined) return;
+
+    const parsed = parser(raw);
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    update(key, value);
+  };
+
+  const commitPronunciation = () => {
+    try {
+      const dict = JSON.parse(pronunciationText);
+      update('pronunciationDict', dict);
+      setCustomPronunciations(dict);
+    } catch {
+      setPronunciationText(JSON.stringify(settings.pronunciationDict || {}, null, 2));
+    }
   };
 
 
@@ -1079,8 +1116,9 @@ function SettingsPanel({ addToast }) {
             type="number"
             min="12"
             max="24"
-            value={settings.fontSize}
-            onChange={(e) => update('fontSize', parseInt(e.target.value) || 15)}
+            value={numberValue('fontSize', settings.fontSize ?? 15)}
+            onChange={(e) => handleNumberChange('fontSize', e.target.value)}
+            onBlur={() => commitNumber('fontSize', 15, (v) => parseInt(v, 10))}
           />
         </div>
         <div className="dashboard-settings-row">
@@ -1090,8 +1128,9 @@ function SettingsPanel({ addToast }) {
             min="1.2"
             max="2.5"
             step="0.1"
-            value={settings.lineHeight}
-            onChange={(e) => update('lineHeight', parseFloat(e.target.value) || 1.6)}
+            value={numberValue('lineHeight', settings.lineHeight ?? 1.6)}
+            onChange={(e) => handleNumberChange('lineHeight', e.target.value)}
+            onBlur={() => commitNumber('lineHeight', 1.6)}
           />
         </div>
         <div className="dashboard-settings-row">
@@ -1101,8 +1140,9 @@ function SettingsPanel({ addToast }) {
             min="0"
             max="2"
             step="0.1"
-            value={settings.paragraphSpacing !== undefined ? settings.paragraphSpacing : 0.5}
-            onChange={(e) => update('paragraphSpacing', parseFloat(e.target.value) || 0)}
+            value={numberValue('paragraphSpacing', settings.paragraphSpacing ?? 0.5)}
+            onChange={(e) => handleNumberChange('paragraphSpacing', e.target.value)}
+            onBlur={() => commitNumber('paragraphSpacing', 0.5)}
           />
         </div>
         <div className="dashboard-settings-row">
@@ -1112,8 +1152,9 @@ function SettingsPanel({ addToast }) {
             min="0"
             max="10"
             step="0.5"
-            value={settings.margin !== undefined ? settings.margin : 1.0}
-            onChange={(e) => update('margin', parseFloat(e.target.value) || 0)}
+            value={numberValue('margin', settings.margin ?? 1.0)}
+            onChange={(e) => handleNumberChange('margin', e.target.value)}
+            onBlur={() => commitNumber('margin', 1.0)}
           />
         </div>
       </div>
@@ -1122,16 +1163,9 @@ function SettingsPanel({ addToast }) {
         <p className="dashboard-settings-hint">Define custom word pronunciations for TTS (one per line: <code>word=pronunciation</code>)</p>
         <textarea
           className="dashboard-settings-textarea"
-          value={JSON.stringify(settings.pronunciationDict || {}, null, 2)}
-          onChange={(e) => {
-            try {
-              const dict = JSON.parse(e.target.value);
-              update('pronunciationDict', dict);
-              setCustomPronunciations(dict);
-            } catch {
-              // Ignore invalid JSON
-            }
-          }}
+          value={pronunciationText}
+          onChange={(e) => setPronunciationText(e.target.value)}
+          onBlur={commitPronunciation}
           rows={6}
           placeholder='{&#10;  "Audire": "aw-deer-ray",&#10;  "TTS": "tee-tee-ess"&#10;}'
         />
