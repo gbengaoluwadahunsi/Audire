@@ -1408,14 +1408,6 @@
   cursor: grabbing;
 }
 
-.virtualized-grid-container {
-  overflow: visible;
-}
-
-.virtualized-grid-container .react-window-grid {
-  outline: none;
-}
-
 .collection-book-card {
   padding-bottom: 12px;
 }
