@@ -252,14 +252,9 @@ export async function uploadBookCover(bookId, coverFile) {
   const form = new FormData();
   form.append('cover', coverFile, coverFile.name || 'cover.jpg');
 
-  const token = localStorage.getItem('audire_token');
-  const headers = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
   const res = await fetch(url(`/api/books/${bookId}/cover`), {
     method: 'POST',
     body: form,
-    headers,
   });
 
   if (!res.ok) {

@@ -179,12 +179,10 @@ function Dashboard({ onBackToLanding }) {
   const handleReorderInCollection = async (collectionId, bookIds) => {
     setSelectedCollection(prev => prev ? { ...prev, bookIds } : prev);
     try {
-      const token = localStorage.getItem('audire_token');
       await fetch(`${import.meta.env.VITE_API_URL || ''}/api/library-sync/collections/${collectionId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ name: selectedCollection?.name, bookIds }),
       });
@@ -753,7 +751,6 @@ function Dashboard({ onBackToLanding }) {
                                     method: 'PATCH',
                                     headers: {
                                       'Content-Type': 'application/json',
-                                      'Authorization': `Bearer ${localStorage.getItem('audire_token') || ''}`,
                                     },
                                     body: JSON.stringify({ name: newName }),
                                   });

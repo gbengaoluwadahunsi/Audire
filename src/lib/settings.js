@@ -13,7 +13,7 @@ const DEFAULTS = {
   theme: 'dark',
   librarySort: 'last_read',
   librarySortOrder: 'desc',
-  pronunciationDict: [], // Array of { word: string, replacement: string }
+  pronunciationDict: {}, // Object map: { word: pronunciation }
 };
 
 export function getSettings() {

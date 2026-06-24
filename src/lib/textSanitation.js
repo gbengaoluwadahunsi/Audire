@@ -25,13 +25,15 @@ const ABBREVIATIONS = {
 let customPronunciations = {};
 
 export function setCustomPronunciations(dict) {
-  customPronunciations = dict || {};
+  customPronunciations = (dict && typeof dict === 'object' && !Array.isArray(dict)) ? dict : {};
 }
 
 export function applyCustomPronunciations(text) {
-  if (!text || Object.keys(customPronunciations).length === 0) return text;
+  if (!text || !customPronunciations || typeof customPronunciations !== 'object') return text;
+  const entries = Object.entries(customPronunciations);
+  if (entries.length === 0) return text;
   let result = text;
-  Object.entries(customPronunciations).forEach(([word, replacement]) => {
+  entries.forEach(([word, replacement]) => {
     if (!word || !replacement) return;
     const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`\\b${escaped}\\b`, 'gi');

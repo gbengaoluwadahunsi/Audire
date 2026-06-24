@@ -407,7 +407,7 @@ export const extractEpubCoverBlob = async (arrayBuffer) => {
 
         // Case-insensitive fallback
         if (!coverFile) {
-            const allFiles = Object.values(zip.files);
+            const allFiles = Object.values(zip.files || {});
             for (const candidate of candidates) {
                 const lower = candidate.toLowerCase();
                 coverFile = allFiles.find(f => !f.dir && f.name.toLowerCase() === lower);
