@@ -32,11 +32,21 @@ function normalizeBackendUrl(rawUrl) {
 
 function normalizeBookUrls(book) {
   if (!book || typeof book !== 'object') return book;
-  return {
-    ...book,
-    cover: normalizeBackendUrl(book.cover),
-    file_url: normalizeBackendUrl(book.file_url),
-  };
+
+  const origin = apiOrigin();
+  let cover = normalizeBackendUrl(book.cover);
+  let file_url = normalizeBackendUrl(book.file_url);
+
+  if (book.id && origin) {
+    if (!file_url || /supabase\.co/i.test(file_url)) {
+      file_url = `${origin}/api/books/${book.id}/file`;
+    }
+    if (cover && /supabase\.co/i.test(cover)) {
+      cover = `${origin}/api/books/${book.id}/cover`;
+    }
+  }
+
+  return { ...book, cover, file_url };
 }
 
 async function fetchJson(path, opts = {}) {

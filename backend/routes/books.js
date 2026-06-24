@@ -64,11 +64,21 @@ const BOOK_COLS = 'id, title, author, cover, file_url, format, file_hash, added_
 
 function normalizeBookUrls(book, baseUrl) {
   if (!book) return book;
-  return {
-    ...book,
-    cover: rewriteLegacyLocalhostUrl(book.cover, baseUrl),
-    file_url: rewriteLegacyLocalhostUrl(book.file_url, baseUrl),
-  };
+
+  let cover = rewriteLegacyLocalhostUrl(book.cover, baseUrl);
+  let file_url = rewriteLegacyLocalhostUrl(book.file_url, baseUrl);
+
+  // Legacy Supabase URLs no longer resolve — serve from this API instead
+  if (book.id) {
+    if (!file_url || /supabase\.co/i.test(file_url)) {
+      file_url = `${baseUrl}/api/books/${book.id}/file`;
+    }
+    if (cover && /supabase\.co/i.test(cover)) {
+      cover = `${baseUrl}/api/books/${book.id}/cover`;
+    }
+  }
+
+  return { ...book, cover, file_url };
 }
 
 const REPAIR_RATE_WINDOW_MS = 30_000;

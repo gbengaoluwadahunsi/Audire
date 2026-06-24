@@ -9,6 +9,7 @@ import ttsRouter from './routes/tts.js';
 import librarySyncRouter from './routes/librarySync.js';
 import authRouter from './routes/auth.js';
 import statsRouter from './routes/stats.js';
+import { ensureSchema } from './migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,10 @@ app.listen(PORT, () => {
   console.log(`Audire backend running on port ${PORT}`);
   if (!process.env.DATABASE_URL) {
     console.warn('DATABASE_URL not set - books API will fail');
+  } else {
+    ensureSchema()
+      .then(() => console.log('Database schema ready'))
+      .catch((err) => console.error('Schema setup failed:', err.message));
   }
   if (!process.env.GROQ_API_KEY) {
     console.warn('GROQ_API_KEY not set - AI features will fail');

@@ -1302,25 +1302,6 @@ function Reader({ bookData, onBack, addToast }) {
     }
   }, [settings.layout]);
 
-  useEffect(() => {
-    if (sleepTimerRef.current) {
-      clearTimeout(sleepTimerRef.current);
-      sleepTimerRef.current = null;
-    }
-    if (sleepTimer && isPlayingTTS) {
-      sleepTimerRef.current = setTimeout(() => {
-        console.log('Sleep timer triggered, pausing TTS');
-        handlePlayPauseRef.current?.();
-        setSleepTimer(null);
-      }, sleepTimer * 60 * 1000);
-    }
-    return () => {
-      if (sleepTimerRef.current) {
-        clearTimeout(sleepTimerRef.current);
-      }
-    };
-  }, [sleepTimer, isPlayingTTS]);
-
   return (
     <div className={`reader-view ${settings.theme === 'light' ? 'reader-view--light' : ''}`} style={readerStyles}>
       <div className="reader-header">

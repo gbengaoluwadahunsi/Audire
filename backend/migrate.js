@@ -1,22 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import 'dotenv/config';
 import { query } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export async function ensureSchema() {
+  const sqlPath = path.join(__dirname, 'neon-schema.sql');
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+  await query(sql);
+}
+
 async function runMigration() {
   try {
-    const sqlPath = path.join(__dirname, 'neon-schema.sql');
-    const sql = fs.readFileSync(sqlPath, 'utf8');
-
     console.log('Running migration...');
-    // Simply split by ';' could be dangerous if there are semicolons in strings, but schema is simple
-    // Actually, we can just run the whole string if db.js allows multiple statements.
-    // The pg driver allows multiple statements in a single query if they are separated by ;
-    await query(sql);
-
+    await ensureSchema();
     console.log('Migration successful!');
     process.exit(0);
   } catch (err) {
@@ -25,4 +23,7 @@ async function runMigration() {
   }
 }
 
-runMigration();
+const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isCli) {
+  runMigration();
+}
