@@ -511,16 +511,25 @@ function Reader({ bookData, onBack, addToast }) {
     const containerEl = pdfPageWrapperRef.current;
     const baseViewport = page.getViewport({ scale: 1 });
     const containerW = containerEl?.offsetWidth || 800;
-    const displayScale = containerW > 0 ? Math.min(1.4, Math.max(0.5, containerW / baseViewport.width)) : 1.25;
+    const displayScale = containerW > 0
+      ? Math.min(2.5, Math.max(0.75, containerW / baseViewport.width))
+      : 1.25;
     const viewport = page.getViewport({ scale: displayScale });
+    const outputScale = Math.min(window.devicePixelRatio || 1, 3);
 
     const canvas = pdfCanvasRef.current;
-    const ctx = canvas.getContext('2d');
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    canvas.width = Math.floor(viewport.width * outputScale);
+    canvas.height = Math.floor(viewport.height * outputScale);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const renderTask = page.render({ canvasContext: ctx, viewport });
+    const renderTask = page.render({
+      canvasContext: ctx,
+      viewport,
+      transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
+    });
     pdfRenderTaskRef.current = renderTask;
     try {
       await renderTask.promise;

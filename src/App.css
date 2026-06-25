@@ -2407,6 +2407,7 @@
   display: block;
   box-shadow: var(--shadow-lg);
   pointer-events: none; /* Let text layer receive selection/clicks */
+  image-rendering: auto;
 }
 
 /* PDF text layer for selection - invisible overlay */
@@ -2421,6 +2422,7 @@
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+  opacity: 1;
 }
 
 .pdf-text-layer.textLayer {
@@ -2430,7 +2432,8 @@
 
 .pdf-text-layer span,
 .pdf-text-layer br {
-  color: transparent;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
   position: absolute;
   white-space: pre;
   cursor: text;
