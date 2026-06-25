@@ -1,19 +1,40 @@
 import React, { useState } from 'react';
-import { Sparkles, X, Loader2, BookOpen, BookMarked, FileText, Image as ImageIcon } from 'lucide-react';
+import { Sparkles, X, Loader2, BookOpen, BookMarked, FileText, Image as ImageIcon, Send, History } from 'lucide-react';
 import { useAI } from '../context/AIContext';
 
 const ACTIONS = [
   { id: 'explain', label: 'Explain', icon: BookOpen },
   { id: 'define', label: 'Define', icon: BookMarked },
   { id: 'summarize', label: 'Summarize', icon: FileText },
+  { id: 'catchup', label: 'Catch me up', icon: History },
   { id: 'visualize', label: 'Visualize', icon: ImageIcon },
 ];
 
 export default function AIPanel({ text, context, isFullPage, onClose }) {
-  const { explain, define, summarize, visualizeScene, isLoading, error, isReady } = useAI();
+  const { explain, define, summarize, visualizeScene, ask, catchup, isLoading, error, isReady } = useAI();
   const [result, setResult] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [activeAction, setActiveAction] = useState(null);
+  const [question, setQuestion] = useState('');
+
+  const askQuestion = async (e) => {
+    e?.preventDefault?.();
+    const q = question.trim();
+    if (!q || activeAction) return;
+    setActiveAction('ask');
+    setResult('');
+    setImageUrl('');
+    try {
+      // Prefer the selected/page text as grounding; fall back to surrounding context.
+      const grounding = (text || '').trim() || (context || '').trim();
+      const res = await ask(q, grounding);
+      setResult(res || 'No response.');
+    } catch (err) {
+      setResult(err.message || 'Something went wrong.');
+    } finally {
+      setActiveAction(null);
+    }
+  };
 
   const runAction = async (actionId) => {
     const t = (text || '').trim();
@@ -31,6 +52,7 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
       if (actionId === 'explain') res = await explain(t, context);
       else if (actionId === 'define') res = await define(t, context);
       else if (actionId === 'summarize') res = await summarize(t);
+      else if (actionId === 'catchup') res = await catchup(`${context || ''}\n${t}`.trim());
       else if (actionId === 'visualize') {
         const out = await visualizeScene(t);
         if (typeof out === 'string' && (out.startsWith('http') || out.startsWith('data:'))) {
@@ -104,6 +126,28 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
               </button>
             ))}
           </div>
+
+          <form className="ai-panel-ask" onSubmit={askQuestion}>
+            <p className="ai-panel-selection-label">Ask about this {isFullPage ? 'page' : 'passage'}</p>
+            <div className="ai-panel-ask-row">
+              <input
+                type="text"
+                className="ai-panel-ask-input"
+                placeholder="e.g. What is the main argument here?"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                disabled={!isReady || activeAction !== null}
+              />
+              <button
+                type="submit"
+                className="ai-panel-ask-btn"
+                disabled={!isReady || !question.trim() || activeAction !== null}
+                title="Ask"
+              >
+                {activeAction === 'ask' ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
+              </button>
+            </div>
+          </form>
         </>
 
         {error && !isLoading && (

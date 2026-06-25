@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, BookOpen, Clock, Flame, TrendingUp } from 'lucide-react';
+import { Loader2, BookOpen, Clock, Flame, TrendingUp, Target } from 'lucide-react';
 import { getReadingSummary } from '../lib/api';
+import { getGoalProgress } from '../lib/listeningGoal';
 
 function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '0m';
@@ -46,6 +47,8 @@ export default function StatsDashboard({ addToast }) {
   const total = summary?.total || {};
   const daily = summary?.daily || [];
   const streak = summary?.streak || 0;
+  const goal = getGoalProgress();
+  const goalDeg = Math.round((goal.percent / 100) * 360);
 
   const maxMinutes = Math.max(
     ...daily.map(d => Math.round(d.seconds / 60)),
@@ -68,6 +71,25 @@ export default function StatsDashboard({ addToast }) {
           <option value={90}>Last 90 days</option>
           <option value={365}>Last year</option>
         </select>
+      </div>
+
+      <div className="stats-goal-card">
+        <div
+          className={`stats-goal-ring ${goal.reached ? 'reached' : ''}`}
+          style={{ background: `conic-gradient(var(--primary) ${goalDeg}deg, var(--border) ${goalDeg}deg)` }}
+        >
+          <div className="stats-goal-ring-inner">
+            <Target size={18} />
+            <span className="stats-goal-percent">{goal.percent}%</span>
+          </div>
+        </div>
+        <div className="stats-goal-info">
+          <h3>Today's listening goal</h3>
+          <p>
+            {Math.round(goal.minutes)} of {goal.goalMinutes} min
+            {goal.reached ? ' — goal reached! 🎉' : ''}
+          </p>
+        </div>
       </div>
 
       <div className="stats-cards">

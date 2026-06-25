@@ -14,6 +14,10 @@ const DEFAULTS = {
   librarySort: 'last_read',
   librarySortOrder: 'desc',
   pronunciationDict: {}, // Object map: { word: pronunciation }
+  skipJunk: true, // Skip page numbers / footers / bare URLs while reading aloud
+  dailyGoalMinutes: 20, // Daily listening goal
+  remindersEnabled: false, // Fire a notification when the daily goal is reached
+  karaokeHighlight: false, // Experimental: highlight text as it's read aloud
 };
 
 export function getSettings() {

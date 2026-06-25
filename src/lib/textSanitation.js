@@ -28,6 +28,36 @@ export function setCustomPronunciations(dict) {
   customPronunciations = (dict && typeof dict === 'object' && !Array.isArray(dict)) ? dict : {};
 }
 
+// When true, strip page numbers / running footers / bare URLs so the voice
+// doesn't read "Page 47" or a DOI mid-paragraph. Defaults on.
+let skipJunk = true;
+
+export function setSkipJunk(enabled) {
+  skipJunk = enabled !== false;
+}
+
+/**
+ * Drop boilerplate lines (page numbers, "Page X of Y", running footers, bare
+ * URLs/DOIs) before the rest of the pipeline joins wrapped lines. Conservative
+ * on purpose: only removes lines that are *entirely* junk so real prose is safe.
+ */
+function stripBoilerplate(text) {
+  const lines = text.split(/\r?\n/);
+  const junk = [
+    /^\s*\d{1,4}\s*$/,                                   // bare page number
+    /^\s*(?=[ivxlcdm]{2,}\s*$)[ivxlcdm]+\s*$/i,          // roman-numeral page (ii, xiv)
+    /^\s*page\s+\d+(\s+of\s+\d+)?\s*$/i,                 // "Page 4" / "Page 4 of 76"
+    /^\s*\d+\s*[|/]\s*page\s*$/i,                         // "12 | Page"
+    /^\s*(https?:\/\/\S+|www\.\S+|doi:\s*\S+)\s*$/i,      // bare URL / DOI line
+  ];
+  const kept = lines.filter((line) => {
+    const t = line.trim();
+    if (!t) return true; // preserve paragraph breaks
+    return !junk.some((re) => re.test(t));
+  });
+  return kept.join('\n');
+}
+
 export function applyCustomPronunciations(text) {
   if (!text || !customPronunciations || typeof customPronunciations !== 'object') return text;
   const entries = Object.entries(customPronunciations);
@@ -50,6 +80,11 @@ export const sanitizeTextForTTS = (text) => {
   if (!text) return '';
 
   let sanitized = text;
+
+  // 0. Strip page numbers / running footers / bare URLs (before line-joining).
+  if (skipJunk) {
+    sanitized = stripBoilerplate(sanitized);
+  }
 
   // 1. Unicode Normalization (NFKC decomposes ligatures like 'fi', 'fl', 'Th')
   sanitized = sanitized.normalize('NFKC');

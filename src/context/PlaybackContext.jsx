@@ -33,6 +33,7 @@ export function PlaybackProvider({ children }) {
   }, []);
 
   const pause = useCallback(() => {
+    ttsManager.pause();
     setIsPlaying(false);
   }, []);
 
@@ -68,6 +69,18 @@ export function PlaybackProvider({ children }) {
       });
     }
   }, [currentBook]);
+
+  // Sync play/pause state when controlled from the lock screen / notification.
+  useEffect(() => {
+    const onPause = () => setIsPlaying(false);
+    const onResume = () => setIsPlaying(true);
+    window.addEventListener('audire-tts-pause', onPause);
+    window.addEventListener('audire-tts-resume', onResume);
+    return () => {
+      window.removeEventListener('audire-tts-pause', onPause);
+      window.removeEventListener('audire-tts-resume', onResume);
+    };
+  }, []);
 
   // Keep a ref to the latest handlers so we don't need to re-register action handlers
   const handlersRef = useRef({ onNext, onPrev, play, pause, stop, currentBook, isPlaying });

@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ttsManager } from '../lib/ttsManager';
-import { sanitizeTextForTTS, splitIntoSentenceChunks } from '../lib/textSanitation';
+import { sanitizeTextForTTS, splitIntoSentenceChunks, setSkipJunk } from '../lib/textSanitation';
 import {
   extractTextFromSection,
   extractTextFromPdfDoc,
@@ -18,6 +18,14 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
 import { updateBookProgress, downloadBookFile, startReadingSession, endReadingSession } from '../lib/api';
 import { getSettings, getPdfOffset, setPdfOffset, saveSettings } from '../lib/settings';
+import { addListeningSeconds } from '../lib/listeningGoal';
+import {
+  setKaraokeEnabled,
+  applyPdfTtsHighlight,
+  applyEpubTtsHighlight,
+  clearPdfTtsHighlight,
+  clearEpubTtsHighlight,
+} from '../lib/ttsHighlight';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
 import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
@@ -50,6 +58,8 @@ function Reader({ bookData, onBack, addToast }) {
   const [searching, setSearching] = useState(false);
   const [highlightColor, setHighlightColor] = useState('yellow');
   const [showAIPanel, setShowAIPanel] = useState(false);
+  const [offlineStatus, setOfflineStatus] = useState('idle'); // 'idle' | 'downloading' | 'done'
+  const [offlineProgress, setOfflineProgress] = useState(0);
   const [selectedText, setSelectedText] = useState('');
   const [selectionContext, setSelectionContext] = useState('');
   const [continuousMode, setContinuousMode] = useState(true);
@@ -90,6 +100,8 @@ function Reader({ bookData, onBack, addToast }) {
   const [pdfPageOffset, setPdfPageOffsetState] = useState(0);
   const pdfCanvasRef = useRef(null);
   const pdfTextLayerRef = useRef(null);
+  const pdfLinkLayerRef = useRef(null);
+  const ttsHighlightFromRef = useRef(0);
   const pdfTextLayerInstanceRef = useRef(null);
   const pdfPageWrapRef = useRef(null);
   const pdfPageWrapperRef = useRef(null);
@@ -187,6 +199,49 @@ function Reader({ bookData, onBack, addToast }) {
     const s = getSettings();
     ttsManager.setSpeed(s.speed);
     ttsManager.setEdgeTtsVoice(s.edgeTtsVoice);
+    setSkipJunk(s.skipJunk !== false);
+    setKaraokeEnabled(!!s.karaokeHighlight);
+  }, []);
+
+  // Clear any karaoke highlight once playback stops.
+  useEffect(() => {
+    if (isPlayingTTS) return;
+    try {
+      if (bookData?.format === 'pdf') {
+        clearPdfTtsHighlight(pdfTextLayerRef.current);
+      } else if (bookData?.format === 'epub') {
+        const contents = renditionRef.current?.getContents?.();
+        const list = Array.isArray(contents) ? contents : (contents ? [contents] : []);
+        if (list[0]?.document) clearEpubTtsHighlight(list[0].document);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [isPlayingTTS, bookData?.format]);
+
+  // Accumulate listening time toward the daily goal while audio is actually playing.
+  useEffect(() => {
+    if (!isPlayingTTS) return;
+    const TICK = 5;
+    const id = setInterval(() => {
+      if (!ttsManager.isPaused && ttsManager.hasActivePlayback) {
+        addListeningSeconds(TICK);
+      }
+    }, TICK * 1000);
+    return () => clearInterval(id);
+  }, [isPlayingTTS]);
+
+  // Keep the in-app play/pause button in sync when the user controls playback
+  // from the phone lock screen / notification (MediaSession).
+  useEffect(() => {
+    const onPause = () => setIsPlayingTTS(false);
+    const onResume = () => { if (ttsManager.hasActivePlayback || ttsManager.isPaused) setIsPlayingTTS(true); };
+    window.addEventListener('audire-tts-pause', onPause);
+    window.addEventListener('audire-tts-resume', onResume);
+    return () => {
+      window.removeEventListener('audire-tts-pause', onPause);
+      window.removeEventListener('audire-tts-resume', onResume);
+    };
   }, []);
 
   useEffect(() => {
@@ -285,6 +340,23 @@ function Reader({ bookData, onBack, addToast }) {
               }
             };
             doc.addEventListener('selectionchange', notifySelection);
+
+            // Make external links clickable (epub.js swallows link clicks by default).
+            doc.addEventListener(
+              'click',
+              (e) => {
+                const anchor = e.target?.closest?.('a[href]');
+                if (!anchor) return;
+                const href = anchor.getAttribute('href') || '';
+                if (/^(https?:)?\/\//i.test(href) || /^mailto:/i.test(href)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const abs = href.startsWith('//') ? `https:${href}` : href;
+                  window.open(abs, '_blank', 'noopener,noreferrer');
+                }
+              },
+              true
+            );
 
             const bookHighlights = getHighlights(bookData.id);
             bookHighlights.forEach((h) => {
@@ -563,6 +635,38 @@ function Reader({ bookData, onBack, addToast }) {
         console.warn('PDF text layer error:', err);
       }
     }
+
+    // Clickable link layer for URI annotations (PDF hyperlinks).
+    const linkLayerEl = pdfLinkLayerRef.current;
+    if (linkLayerEl) {
+      linkLayerEl.innerHTML = '';
+      linkLayerEl.style.width = `${viewport.width}px`;
+      linkLayerEl.style.height = `${viewport.height}px`;
+      try {
+        const annotations = await page.getAnnotations({ intent: 'display' });
+        for (const a of annotations) {
+          const href = a?.url || a?.unsafeUrl;
+          if (a?.subtype !== 'Link' || !href || !a.rect) continue;
+          const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(a.rect);
+          const left = Math.min(x1, x2);
+          const top = Math.min(y1, y2);
+          const w = Math.abs(x2 - x1);
+          const h = Math.abs(y2 - y1);
+          const anchor = document.createElement('a');
+          anchor.href = href;
+          anchor.target = '_blank';
+          anchor.rel = 'noopener noreferrer';
+          anchor.className = 'pdf-link';
+          anchor.style.left = `${left}px`;
+          anchor.style.top = `${top}px`;
+          anchor.style.width = `${w}px`;
+          anchor.style.height = `${h}px`;
+          linkLayerEl.appendChild(anchor);
+        }
+      } catch (err) {
+        console.warn('PDF link layer error:', err);
+      }
+    }
   };
 
   const handlePlayPauseRef = useRef(null);
@@ -811,6 +915,8 @@ function Reader({ bookData, onBack, addToast }) {
         if (chunks && chunks.length > 0) {
           console.log(`Reader: Sending ${chunks.length} chunks to TTS engine`);
           let firstChunkSignalled = !isEdgeTTS;
+          ttsHighlightFromRef.current = 0;
+          const karaokeText = text;
 
           await ttsManager.speakContinuous(chunks, (done, total) => {
             if (!firstChunkSignalled) {
@@ -820,6 +926,9 @@ function Reader({ bookData, onBack, addToast }) {
             if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
               const ct = Math.max(1, totalPages - pdfPageOffset);
               setPlaybackProgress(((playbackPdfPage - 1 + (done / total)) / ct) * 100);
+            }
+            if (getSettings().karaokeHighlight && sessionId === playbackSessionRef.current) {
+              highlightTtsChunk(chunks[done - 1], karaokeText);
             }
           }, sessionId, {
             title: bookData.title,
@@ -1058,6 +1167,68 @@ function Reader({ bookData, onBack, addToast }) {
     } else {
       addBookmark(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: pdfText?.slice(0, 100) || '' });
       setBookmarks(getBookmarks(bookData.id));
+    }
+  };
+
+  const highlightTtsChunk = (chunkText, rawPageText) => {
+    if (!chunkText) return;
+    try {
+      if (bookData.format === 'pdf') {
+        applyPdfTtsHighlight(
+          pdfTextLayerRef.current,
+          chunkText,
+          ttsHighlightFromRef,
+          pdfPageWrapperRef.current,
+          rawPageText
+        );
+      } else if (bookData.format === 'epub') {
+        const contents = renditionRef.current?.getContents?.();
+        const list = Array.isArray(contents) ? contents : (contents ? [contents] : []);
+        const doc = list[0]?.document;
+        if (doc) applyEpubTtsHighlight(doc, chunkText, ttsHighlightFromRef);
+      }
+    } catch {
+      /* highlighting is best-effort; never break playback */
+    }
+  };
+
+  const handleDownloadOffline = async () => {
+    if (offlineStatus === 'downloading') return;
+    setOfflineStatus('downloading');
+    setOfflineProgress(0);
+    try {
+      let rawText = '';
+      if (bookData.format === 'pdf' && pdfRef.current && totalPages > 0) {
+        const from = Math.min(totalPages, (currentPage || 1) + pdfPageOffset);
+        const to = Math.min(totalPages, from + 24); // ~25 pages ≈ a chapter
+        rawText = await extractTextFromPdfDocRange(pdfRef.current, from, to);
+      } else if (bookData.format === 'epub') {
+        const loc = renditionRef.current?.currentLocation?.();
+        const href = loc?.start?.href;
+        if (href && bookRef.current) {
+          rawText = await extractTextFromSection(bookRef.current, href);
+        }
+      }
+
+      const chunks = splitIntoSentenceChunks(sanitizeTextForTTS(rawText || ''));
+      if (!chunks.length) {
+        addToast?.('Nothing to download here yet — try once the page has loaded.', 'info');
+        setOfflineStatus('idle');
+        return;
+      }
+
+      ttsManager.setEdgeTtsVoice(getSettings().edgeTtsVoice);
+      ttsManager.setSpeed(getSettings().speed || 1);
+      const ok = await ttsManager.downloadChunks(chunks, (done, total) => {
+        setOfflineProgress(total ? Math.round((done / total) * 100) : 0);
+      });
+      setOfflineStatus('done');
+      addToast?.(`Saved ${ok} segment${ok === 1 ? '' : 's'} for offline listening`, 'success');
+      setTimeout(() => setOfflineStatus('idle'), 4000);
+    } catch (err) {
+      console.error('Offline download failed:', err);
+      addToast?.('Could not download for offline use', 'error');
+      setOfflineStatus('idle');
     }
   };
 
@@ -1358,6 +1529,20 @@ function Reader({ bookData, onBack, addToast }) {
             title="Search in book"
           >
             <Search size={18} />
+          </button>
+          <button
+            className={`control-btn ${offlineStatus !== 'idle' ? 'active' : ''}`}
+            onClick={handleDownloadOffline}
+            disabled={offlineStatus === 'downloading'}
+            title="Download this section for offline listening"
+          >
+            {offlineStatus === 'downloading' ? (
+              <span className="offline-progress-label">{offlineProgress}%</span>
+            ) : offlineStatus === 'done' ? (
+              <Check size={18} />
+            ) : (
+              <Download size={18} />
+            )}
           </button>
           <button
             className={`control-btn ${showToc ? 'active' : ''}`}
@@ -1723,6 +1908,7 @@ function Reader({ bookData, onBack, addToast }) {
                       >
                         <canvas ref={pdfCanvasRef} className="pdf-canvas" />
                         <div ref={pdfTextLayerRef} className="pdf-text-layer textLayer" />
+                        <div ref={pdfLinkLayerRef} className="pdf-link-layer" />
                       </div>
                     </div>
                   </div>

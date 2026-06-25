@@ -174,6 +174,23 @@ export async function aiVisualize(text) {
   return content ?? '';
 }
 
+export async function aiAsk(question, context = '') {
+  const { content } = await aiFetch('/api/ai/ask', { question, context });
+  return content ?? '';
+}
+
+export async function aiCatchup(text) {
+  const { content } = await aiFetch('/api/ai/catchup', { text });
+  return content ?? '';
+}
+
+export async function importArticleFromUrl(pageUrl) {
+  return fetchJson('/api/import/url', {
+    method: 'POST',
+    body: JSON.stringify({ url: pageUrl }),
+  });
+}
+
 /* ── Library Sync: Collections ── */
 
 export function isLibrarySyncConfigured() {

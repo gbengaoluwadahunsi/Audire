@@ -112,6 +112,49 @@ Example: [{"front":"Why might teams choose micro-frontends over a monolith?","ba
   }
 });
 
+router.post('/catchup', async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'text required' });
+    }
+    // Use the tail of what was read so the recap reflects the most recent context.
+    const recent = String(text).slice(-6000);
+    const system = 'You are a reading companion giving a quick "catch me up" recap so the user can resume listening. Recap the key events, ideas, and where things stand in 3-6 short sentences. Be clear and spoiler-free beyond what is provided.';
+    const user = `Here is what the reader has covered so far (most recent part):\n"""${recent}"""\n\nGive a quick recap to help them pick back up:`;
+    const content = await groqChat(
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      { max_tokens: 400 }
+    );
+    res.json({ content });
+  } catch (e) {
+    console.error('AI catchup error:', e);
+    res.status(500).json({ error: e.message || 'Catch-up failed' });
+  }
+});
+
+router.post('/ask', async (req, res) => {
+  try {
+    const { question, context } = req.body || {};
+    if (!question || typeof question !== 'string') {
+      return res.status(400).json({ error: 'question required' });
+    }
+    const ctx = String(context || '').slice(0, 6000);
+    const system = 'You are a helpful reading assistant answering questions about a book the user is reading. Answer ONLY using the provided context. If the answer is not in the context, say you can\'t find it in this part of the book. Be concise and clear.';
+    const user = ctx
+      ? `Context from the book:\n"""${ctx}"""\n\nQuestion: ${question}\n\nAnswer:`
+      : `Question: ${question}\n\n(No book context was provided.) Answer:`;
+    const content = await groqChat(
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      { max_tokens: 400 }
+    );
+    res.json({ content });
+  } catch (e) {
+    console.error('AI ask error:', e);
+    res.status(500).json({ error: e.message || 'Ask failed' });
+  }
+});
+
 router.post('/visualize', async (req, res) => {
   try {
     const { text } = req.body || {};

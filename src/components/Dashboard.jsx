@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, ArrowLeft, Edit, TrendingUp } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, ArrowLeft, Edit, TrendingUp, BookOpen, Link as LinkIcon } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
-import { fetchBooks, uploadBook, deleteBook, repairBookCover } from '../lib/api';
+import { fetchBooks, uploadBook, deleteBook, repairBookCover, importArticleFromUrl } from '../lib/api';
+import { buildArticleEpub } from '../lib/articleEpub';
 import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
-import { setCustomPronunciations } from '../lib/textSanitation';
+import { setCustomPronunciations, setSkipJunk } from '../lib/textSanitation';
+import { ensureNotificationPermission } from '../lib/listeningGoal';
+import { getCacheStats, clearCache } from '../lib/ttsCache';
 import Reader from './Reader';
 import MiniPlayer from './MiniPlayer';
 import MetadataEditor from './MetadataEditor';
@@ -194,6 +197,30 @@ function Dashboard({ onBackToLanding }) {
 
   const MAX_ATTEMPT_SIZE = 100 * 1024 * 1024; // 100 MB - won't try to compress larger (memory risk)
 
+  const handleImportUrl = async () => {
+    const pageUrl = (typeof window !== 'undefined' ? window.prompt('Paste a link to an article or web page to listen to:') : '')?.trim();
+    if (!pageUrl) return;
+    if (!/^https?:\/\//i.test(pageUrl)) {
+      addToast('Please paste a full http(s):// link', 'error');
+      return;
+    }
+    setIsUploading(true);
+    addToast('Fetching article…', 'info');
+    try {
+      const article = await importArticleFromUrl(pageUrl);
+      const blob = await buildArticleEpub(article);
+      const fileName = `${(article.title || 'article').replace(/[^\w\d -]+/g, '').slice(0, 60) || 'article'}.epub`;
+      const uploaded = await uploadBook(blob, fileName);
+      addToast(`"${uploaded.title}" added to library`, 'success');
+      await loadBooks();
+    } catch (err) {
+      console.error('URL import failed:', err);
+      addToast(err.message || 'Could not import that link', 'error');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
@@ -272,6 +299,14 @@ function Dashboard({ onBackToLanding }) {
   };
 
   const collectedBookIds = new Set(collections.flatMap(c => c.bookIds));
+
+  // Most recently read book that's started but not finished — for the resume card.
+  const continueBook = books
+    .filter((b) => {
+      const pct = getProgressPercent(b);
+      return b.last_read && pct > 0 && pct < 100;
+    })
+    .sort((a, b) => new Date(b.last_read || 0) - new Date(a.last_read || 0))[0] || null;
 
   const filteredBooks = books
     .filter(
@@ -396,6 +431,15 @@ function Dashboard({ onBackToLanding }) {
                 <span>Add Book</span>
               </>
             )}
+          </button>
+          <button
+            className="dashboard-import-url"
+            onClick={handleImportUrl}
+            disabled={isUploading}
+            title="Import an article or web page by URL"
+          >
+            <LinkIcon size={18} />
+            <span>Import from URL</span>
           </button>
         </div>
       </aside>
@@ -556,6 +600,38 @@ function Dashboard({ onBackToLanding }) {
                   </div>
                 ) : filteredBooks.length > 0 ? (
                   <>
+                    {continueBook && !searchQuery && selectedBookIds.size === 0 && (
+                      <button
+                        type="button"
+                        className="continue-listening-card"
+                        onClick={() => setSelectedBook(continueBook)}
+                      >
+                        {continueBook.cover ? (
+                          <img src={continueBook.cover} alt="" className="continue-listening-cover" />
+                        ) : (
+                          <div className="continue-listening-cover continue-listening-cover-fallback">
+                            <BookOpen size={28} />
+                          </div>
+                        )}
+                        <div className="continue-listening-info">
+                          <span className="continue-listening-label">Continue listening</span>
+                          <h3 className="continue-listening-title">{continueBook.title || 'Untitled'}</h3>
+                          <p className="continue-listening-author">{continueBook.author || 'Unknown author'}</p>
+                          <div className="continue-listening-progress">
+                            <div className="continue-listening-bar">
+                              <div
+                                className="continue-listening-fill"
+                                style={{ width: `${Math.min(100, Math.max(0, getProgressPercent(continueBook)))}%` }}
+                              />
+                            </div>
+                            <span>{Math.round(getProgressPercent(continueBook))}%</span>
+                          </div>
+                        </div>
+                        <span className="continue-listening-play">
+                          <Play size={22} fill="currentColor" />
+                        </span>
+                      </button>
+                    )}
                     {selectedBookIds.size > 0 && (
                       <div className="bulk-actions-bar">
                         <span className="bulk-actions-count">{selectedBookIds.size} book{selectedBookIds.size > 1 ? 's' : ''} selected</span>
@@ -983,14 +1059,59 @@ function SettingsPanel() {
   const [pronunciationText, setPronunciationText] = useState(
     () => JSON.stringify(getSettings().pronunciationDict || {}, null, 2)
   );
+  const [previewing, setPreviewing] = useState(false);
+  const [cacheStats, setCacheStats] = useState(null);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  useEffect(() => {
+    getCacheStats().then(setCacheStats).catch(() => {});
+  }, []);
+
+  const handleClearCache = async () => {
+    setClearingCache(true);
+    await clearCache();
+    const stats = await getCacheStats().catch(() => ({ count: 0, bytes: 0 }));
+    setCacheStats(stats);
+    setClearingCache(false);
+  };
+
+  const toggleReminders = async (enabled) => {
+    if (enabled) {
+      const granted = await ensureNotificationPermission();
+      update('remindersEnabled', granted);
+      return;
+    }
+    update('remindersEnabled', false);
+  };
 
   useEffect(() => {
     ttsManager.setSpeed(settings.speed);
     ttsManager.setEdgeTtsVoice(settings.edgeTtsVoice);
+    setSkipJunk(settings.skipJunk !== false);
     if (settings.pronunciationDict) {
       setCustomPronunciations(settings.pronunciationDict);
     }
-  }, [settings.speed, settings.edgeTtsVoice, settings.pronunciationDict]);
+  }, [settings.speed, settings.edgeTtsVoice, settings.skipJunk, settings.pronunciationDict]);
+
+  useEffect(() => () => { ttsManager.stop(); }, []);
+
+  const previewVoice = async () => {
+    if (previewing) {
+      ttsManager.stop();
+      setPreviewing(false);
+      return;
+    }
+    setPreviewing(true);
+    try {
+      ttsManager.setEdgeTtsVoice(settings.edgeTtsVoice);
+      ttsManager.setSpeed(settings.speed || 1);
+      await ttsManager.speak('Hi, this is how this voice sounds when reading your books aloud.');
+    } catch {
+      /* ignore preview failures */
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   const persist = (next) => {
     setSettings(next);
@@ -1065,6 +1186,85 @@ function SettingsPanel() {
             <option key={v.id} value={v.id}>{v.name} ({v.grade})</option>
           ))}
         </select>
+        <button
+          type="button"
+          className="dashboard-settings-preview-btn"
+          onClick={previewVoice}
+        >
+          {previewing ? 'Stop preview' : 'Preview voice'}
+        </button>
+      </div>
+      <div className="dashboard-settings-card">
+        <h3>Skip junk while reading</h3>
+        <p className="dashboard-settings-hint">
+          Skip page numbers, running footers, and bare links so the voice doesn&apos;t read &quot;Page 47&quot; mid-sentence.
+        </p>
+        <label className="dashboard-settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.skipJunk !== false}
+            onChange={(e) => update('skipJunk', e.target.checked)}
+          />
+          <span>{settings.skipJunk !== false ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+      <div className="dashboard-settings-card">
+        <h3>Daily listening goal</h3>
+        <p className="dashboard-settings-hint">Set a target and build a daily habit. Progress shows on the Stats tab.</p>
+        <div className="dashboard-settings-row">
+          <label>Minutes per day</label>
+          <input
+            type="number"
+            min="1"
+            max="600"
+            className="dashboard-settings-select"
+            style={{ width: 100 }}
+            value={numberValue('dailyGoalMinutes', 20)}
+            onChange={(e) => handleNumberChange('dailyGoalMinutes', e.target.value)}
+            onBlur={() => commitNumber('dailyGoalMinutes', 20, (v) => parseInt(v, 10))}
+          />
+        </div>
+        <label className="dashboard-settings-toggle" style={{ marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={!!settings.remindersEnabled}
+            onChange={(e) => toggleReminders(e.target.checked)}
+          />
+          <span>Notify me when I reach my goal</span>
+        </label>
+      </div>
+      <div className="dashboard-settings-card">
+        <h3>Offline audio</h3>
+        <p className="dashboard-settings-hint">
+          Audio you listen to is cached for instant, offline replay. Use the download button in the reader to pre-save a section.
+        </p>
+        <p className="dashboard-settings-hint">
+          {cacheStats
+            ? `${cacheStats.count} segment${cacheStats.count === 1 ? '' : 's'} cached · ${(cacheStats.bytes / (1024 * 1024)).toFixed(1)} MB`
+            : 'Calculating…'}
+        </p>
+        <button
+          type="button"
+          className="dashboard-settings-preview-btn"
+          onClick={handleClearCache}
+          disabled={clearingCache || !(cacheStats?.count)}
+        >
+          {clearingCache ? 'Clearing…' : 'Clear offline audio'}
+        </button>
+      </div>
+      <div className="dashboard-settings-card">
+        <h3>Highlight while reading <span style={{ fontWeight: 400, fontSize: '0.78rem', opacity: 0.7 }}>(experimental)</span></h3>
+        <p className="dashboard-settings-hint">
+          Highlight each sentence as it&apos;s read aloud (karaoke style). May occasionally mis-highlight on complex layouts.
+        </p>
+        <label className="dashboard-settings-toggle">
+          <input
+            type="checkbox"
+            checked={!!settings.karaokeHighlight}
+            onChange={(e) => update('karaokeHighlight', e.target.checked)}
+          />
+          <span>{settings.karaokeHighlight ? 'On' : 'Off'}</span>
+        </label>
       </div>
       <div className="dashboard-settings-card">
         <h3>Playback speed</h3>

@@ -9,6 +9,7 @@ import ttsRouter from './routes/tts.js';
 import librarySyncRouter from './routes/librarySync.js';
 import authRouter from './routes/auth.js';
 import statsRouter from './routes/stats.js';
+import importRouter from './routes/import.js';
 import { ensureSchema } from './migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,7 @@ app.use('/api/library-sync', librarySyncRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/tts', ttsRouter);
 app.use('/api/stats', statsRouter);
+app.use('/api/import', importRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });

@@ -1,4 +1,5 @@
 // TTS Manager: Edge TTS (server-side neural voices)
+import { cacheKey, getCachedAudio, putCachedAudio } from './ttsCache';
 
 // ─── Server Edge TTS ───────────────────────────────────────────────────────
 // Fetches audio from /api/tts (Edge TTS backend). Fast, no browser model needed.
@@ -18,6 +19,11 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
   const trimmed = (text || '').trim();
   if (!trimmed) return null;
 
+  // Serve from the offline cache first (instant + works with no network).
+  const key = cacheKey(trimmed, voice, rate);
+  const cached = await getCachedAudio(key);
+  if (cached) return cached;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (Date.now() < _edgeBackendUnavailableUntil) return null;
     let timer;
@@ -33,7 +39,10 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
 
       if (res.ok) {
         const blob = await res.blob();
-        if (blob && blob.size > 100) return blob;
+        if (blob && blob.size > 100) {
+          putCachedAudio(key, blob);
+          return blob;
+        }
       }
 
       if (res.status >= 500) {
@@ -87,15 +96,28 @@ class TTSManager {
     return this._audioCtx;
   }
 
+  _dispatch(name) {
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(name));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   _setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.setActionHandler('play', () => this.resume());
-    navigator.mediaSession.setActionHandler('pause', () => this.pause());
-    navigator.mediaSession.setActionHandler('previoustrack', () => {});
-    navigator.mediaSession.setActionHandler('nexttrack', () => {});
-    navigator.mediaSession.setActionHandler('seekbackward', () => {});
-    navigator.mediaSession.setActionHandler('seekforward', () => {});
-    navigator.mediaSession.setActionHandler('seekto', () => {});
+    // Only own play/pause here. next/prev/seek are owned by PlaybackContext so
+    // lock-screen chapter skipping keeps working — don't overwrite them.
+    navigator.mediaSession.setActionHandler('play', () => {
+      this.resume();
+      this._dispatch('audire-tts-resume');
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      this.pause();
+      this._dispatch('audire-tts-pause');
+    });
   }
 
   setMediaMetadata({ title, author, cover }) {
@@ -333,6 +355,41 @@ class TTSManager {
       this._currentAudio = null;
     }
     this._cleanupCache();
+  }
+
+  /**
+   * Pre-generate (and cache) audio for a list of chunks so they can be played
+   * later without a network connection. Reports progress via onProgress(done, total).
+   * Returns the number of chunks successfully cached.
+   */
+  async downloadChunks(textChunks, onProgress, shouldCancel) {
+    if (!Array.isArray(textChunks) || textChunks.length === 0) return 0;
+    const speakable = textChunks
+      .map((c) => (c || '').trim())
+      .filter((c) => c.length >= 2 && /[a-zA-ZÀ-ÿ0-9]/.test(c));
+    const total = speakable.length;
+    let done = 0;
+    let ok = 0;
+    const CONCURRENCY = 3;
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < speakable.length) {
+        if (shouldCancel?.()) return;
+        const idx = cursor++;
+        try {
+          const blob = await _fetchEdgeTTS(speakable[idx], this.edgeTtsVoice, this.speed);
+          if (blob) ok += 1;
+        } catch {
+          /* skip failed chunk */
+        }
+        done += 1;
+        onProgress?.(done, total);
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
+    return ok;
   }
 
   setEdgeTtsVoice(voice) {

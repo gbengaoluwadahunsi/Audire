@@ -4,7 +4,12 @@
  */
 
 /** Off by default: fuzzy matching can highlight the wrong regions (solid yellow bars). Audio still works. */
-const TTS_DOM_HIGHLIGHT_ENABLED = false;
+let TTS_DOM_HIGHLIGHT_ENABLED = false;
+
+/** Enable/disable karaoke-style DOM highlighting at runtime (driven by settings). */
+export function setKaraokeEnabled(enabled) {
+  TTS_DOM_HIGHLIGHT_ENABLED = !!enabled;
+}
 
 export function buildPdfLayerTextIndex(textLayerEl) {
   if (!textLayerEl) return { full: '', map: [] };
