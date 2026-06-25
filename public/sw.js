@@ -1,4 +1,4 @@
-const CACHE = 'audire-v6';
+const CACHE = 'audire-v7';
 
 const PRECACHE = [
   '/',
@@ -6,6 +6,10 @@ const PRECACHE = [
   '/favicon.svg',
   '/logo.svg',
   '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

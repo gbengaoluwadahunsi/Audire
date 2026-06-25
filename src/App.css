@@ -2,8 +2,11 @@
    LANDING PAGE
    ======================================== */
 .landing {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   position: relative;
 }
 
@@ -111,6 +114,103 @@
   background: var(--surface-hover);
   border-color: var(--primary);
   color: var(--primary);
+}
+
+/* Install (PWA) button */
+.install-button-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.install-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.install-button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.install-ios-help {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 280px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: 16px 16px 14px;
+  z-index: 1000;
+  text-align: left;
+}
+
+.install-ios-help-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+.install-ios-help ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.install-ios-help li svg {
+  vertical-align: middle;
+  margin: 0 2px;
+  color: var(--primary);
+}
+
+.install-ios-help-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  display: flex;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.install-ios-help-close:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+@media (max-width: 768px) {
+  .install-button span {
+    display: none;
+  }
+  .install-button {
+    padding: 8px 10px;
+  }
+  .install-ios-help {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
 }
 
 /* Landing Hero */

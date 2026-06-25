@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Book, Headphones, Zap, Shield, ArrowRight, Sparkles, Sun, Moon } from 'lucide-react';
 import { getSettings, saveSettings } from '../lib/settings';
+import InstallButton from './InstallButton';
 
 void motion;
 
@@ -33,6 +34,7 @@ function LandingPage({ onEnter }) {
           <span>Audire</span>
         </div>
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <InstallButton />
           <button
             onClick={toggleTheme}
             style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', padding: '8px' }}
