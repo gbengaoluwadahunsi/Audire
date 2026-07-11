@@ -199,11 +199,24 @@ button {
   display: flex;
   gap: 8px;
   margin-top: auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.dashboard-collection-books::-webkit-scrollbar {
+  height: 6px;
+}
+
+.dashboard-collection-books::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
 }
 
 .dashboard-collection-book-thumb {
   width: 48px;
   height: 64px;
+  flex-shrink: 0;
   background: var(--surface);
   border-radius: var(--radius-sm);
   overflow: hidden;

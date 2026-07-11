@@ -1459,7 +1459,18 @@
   display: flex;
   gap: 12px;
   margin-top: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.dashboard-collection-books::-webkit-scrollbar {
+  height: 6px;
+}
+
+.dashboard-collection-books::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
 }
 
 .dashboard-collection-empty {
@@ -1474,6 +1485,7 @@
 .dashboard-collection-book-thumb {
   width: 72px;
   height: 104px;
+  flex-shrink: 0;
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-elevated);

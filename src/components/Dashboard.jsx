@@ -860,7 +860,7 @@ function Dashboard({ onBackToLanding }) {
                             <div className="dashboard-collection-empty">No books in this collection yet.</div>
                           ) : (
                             <div className="dashboard-collection-books">
-                              {visibleBooks.slice(0, 6).map((b) => (
+                              {visibleBooks.map((b) => (
                                 <div
                                   key={b.id}
                                   className="dashboard-collection-book-thumb"
