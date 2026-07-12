@@ -21,6 +21,7 @@ import StatsDashboard from './StatsDashboard';
 import { ToastContainer } from './Toast';
 import VirtualizedBookGrid from './VirtualizedBookGrid';
 import DragDropCollection from './DragDropCollection';
+import ExportModal from './ExportModal';
 
 const SORT_OPTIONS = [
   { id: 'title', label: 'Title' },
@@ -68,6 +69,7 @@ function Dashboard({ onBackToLanding }) {
   const [bulkAction, setBulkAction] = useState(null);
   const [showCollectionDeleteConfirm, setShowCollectionDeleteConfirm] = useState(null);
   const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
+  const [exportBook, setExportBook] = useState(null);
   const fileInputRef = useRef(null);
   const [coverErrorIds, setCoverErrorIds] = useState(() => new Set());
   const coverRepairAttempted = useRef(new Set());
@@ -677,6 +679,7 @@ function Dashboard({ onBackToLanding }) {
                       onDelete={(book) => setShowDeleteConfirm(book.id)}
                       onAddToCollection={(book) => setShowCollectionMenu(showCollectionMenu === book.id ? null : book.id)}
                       onEditMetadata={(book) => setEditingBook(book)}
+                      onExport={(book) => setExportBook(book)}
                       coverErrorIds={coverErrorIds}
                       onCoverError={(book) => {
                         setCoverErrorIds(prev => new Set([...prev, book.id]));
@@ -780,6 +783,7 @@ function Dashboard({ onBackToLanding }) {
                         enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
                       }}
                       searchQuery={collectionSearchQuery}
+                      getProgressPercent={getProgressPercent}
                     />
                   </div>
                 ) : collections.length === 0 ? (
@@ -882,6 +886,9 @@ function Dashboard({ onBackToLanding }) {
                                   ) : (
                                     <FileText size={16} />
                                   )}
+                                  {getProgressPercent(b) >= 99.5 && (
+                                    <span className="dashboard-book-done-badge" style={{ fontSize: '0.5rem', padding: '2px 4px' }}>DONE</span>
+                                  )}
                                   <button
                                     type="button"
                                     className="dashboard-collection-book-remove"
@@ -932,6 +939,14 @@ function Dashboard({ onBackToLanding }) {
       </main>
 
       <MiniPlayer onOpenBook={setSelectedBook} />
+
+      {exportBook && (
+        <ExportModal 
+          bookData={exportBook} 
+          onClose={() => setExportBook(null)} 
+          addToast={addToast} 
+        />
+      )}
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 

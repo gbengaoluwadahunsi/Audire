@@ -34,8 +34,8 @@ function openDb() {
 }
 
 /** Stable, compact key from the inputs that determine the audio. */
-export function cacheKey(text, voice, rate) {
-  const raw = `${voice}|${rate}|${(text || '').trim()}`;
+export function cacheKey(text, voice, rate, pitch = 0) {
+  const raw = `${voice}|${rate}|${pitch}|${(text || '').trim()}`;
   let h1 = 0x811c9dc5;
   let h2 = 0x1000193;
   for (let i = 0; i < raw.length; i++) {

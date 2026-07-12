@@ -748,6 +748,22 @@
   letter-spacing: 0.5px;
 }
 
+.dashboard-book-done-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  z-index: 2;
+}
+
 .dashboard-book-info h3 {
   font-size: 0.95rem;
   font-weight: 600;
@@ -3919,3 +3935,539 @@
   }
 }
 
+
+/* ========================================
+   PHASE 4 — GOALS, GAMIFICATION & SHARING
+   ======================================== */
+
+/* ── Generic Modal Overlay (used by ExportModal) ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 28px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: var(--shadow-xl);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.modal-header h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.close-btn {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.primary-btn {
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius-md);
+  padding: 9px 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: all 0.2s;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-glow);
+}
+
+.primary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 9px 18px;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* ── Stats Goal Card Enhancements ── */
+.stats-goal-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stats-goal-card.reached {
+  border-color: rgba(139, 92, 246, 0.4);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), var(--bg-card));
+}
+
+.stats-goal-ring {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.5s ease;
+}
+
+.stats-goal-ring-inner {
+  width: 68px;
+  height: 68px;
+  background: var(--bg-elevated);
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--primary);
+}
+
+.stats-goal-percent {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.stats-goal-info {
+  flex: 1;
+}
+
+.stats-goal-info-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.stats-goal-info-title h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.stats-goal-info p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.stats-goal-edit-btn {
+  background: var(--surface);
+  color: var(--text-tertiary);
+  border-radius: 6px;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.stats-goal-edit-btn:hover, .stats-goal-edit-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.stats-goal-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stats-goal-input {
+  width: 72px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 5px 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: var(--font);
+  text-align: center;
+  outline: none;
+}
+
+.stats-goal-unit {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.stats-goal-confetti {
+  font-size: 2.5rem;
+  animation: bounce-in 0.4s ease;
+  flex-shrink: 0;
+}
+
+@keyframes bounce-in {
+  0% { transform: scale(0); }
+  70% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* ── Streak Banner ── */
+.stats-streak-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(234, 88, 12, 0.08));
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius-xl);
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+.stats-streak-fire {
+  font-size: 2.2rem;
+  animation: flame-flicker 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes flame-flicker {
+  from { transform: scale(1) rotate(-3deg); }
+  to   { transform: scale(1.1) rotate(3deg); }
+}
+
+.stats-streak-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stats-streak-text strong {
+  font-size: 1.05rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, #f59e0b, #ea580c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.stats-streak-text span {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+/* ── Stats Card Streak Active ── */
+.stats-card.streak-active .stats-card-icon {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(234, 88, 12, 0.1));
+  color: #f59e0b;
+}
+
+/* ── Today bar highlight in chart ── */
+.stats-chart-bar.today {
+  background: linear-gradient(180deg, #a78bfa, var(--primary-dark));
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.4);
+}
+
+/* ── Reader highlight actions ── */
+.reader-highlight-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.reader-highlight-item > button:first-child {
+  flex: 1;
+  text-align: left;
+  background: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.reader-highlight-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.reader-highlight-actions .share {
+  background: rgba(139, 92, 246, 0.1);
+  color: var(--primary-light);
+  border-radius: 6px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.reader-highlight-actions .share:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.reader-highlight-actions .remove {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+  border-radius: 6px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.reader-highlight-actions .remove:hover {
+  background: var(--error);
+  color: #fff;
+}
+
+/* ── Quote Share Modal ── */
+.quote-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.quote-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  padding: 24px;
+  width: 100%;
+  max-width: 680px;
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.quote-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quote-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.quote-modal-close {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.quote-modal-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.quote-canvas-wrapper {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  aspect-ratio: 9 / 5;
+  background: #111;
+}
+
+.quote-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.quote-gradient-picker {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.quote-gradient-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.quote-gradient-swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quote-gradient-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.quote-gradient-swatch:hover {
+  transform: scale(1.15);
+}
+
+.quote-gradient-swatch.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+  transform: scale(1.15);
+}
+
+.quote-gradient-swatch.shuffle {
+  background: var(--surface);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quote-gradient-swatch.shuffle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.quote-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.quote-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.quote-btn.secondary {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.quote-btn.secondary:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.quote-btn.primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.quote-btn.primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-glow);
+}
+
+.quote-btn.primary.download {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
+.quote-btn.primary.download:hover:not(:disabled) {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+}
+
+.quote-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .stats-goal-card {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .quote-modal {
+    padding: 16px;
+  }
+
+  .quote-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .quote-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .stats-streak-banner {
+    padding: 12px 16px;
+  }
+}

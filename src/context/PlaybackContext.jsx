@@ -10,6 +10,9 @@ export function PlaybackProvider({ children }) {
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(1);
   const [speed, setSpeedState] = useState(getSettings().speed || 1.0);
+  const [voice, setVoiceState] = useState(getSettings().voice || 'en-US-AvaMultilingualNeural');
+  const [pitch, setPitchState] = useState(getSettings().pitch || 0);
+  const [sleepTimer, setSleepTimer] = useState(null); // time in ms when to stop
 
   const setVolume = useCallback((v) => {
     setVolumeState(v);
@@ -22,6 +25,29 @@ export function PlaybackProvider({ children }) {
     ttsManager.setSpeed(clampedSpeed);
     const settings = getSettings();
     saveSettings({ ...settings, speed: clampedSpeed });
+  }, []);
+
+  const setVoice = useCallback((v) => {
+    setVoiceState(v);
+    ttsManager.setEdgeTtsVoice(v);
+    const settings = getSettings();
+    saveSettings({ ...settings, voice: v });
+  }, []);
+
+  const setPitch = useCallback((p) => {
+    const clampedPitch = Math.max(-100, Math.min(100, p));
+    setPitchState(clampedPitch);
+    ttsManager.setPitch(clampedPitch);
+    const settings = getSettings();
+    saveSettings({ ...settings, pitch: clampedPitch });
+  }, []);
+
+  const startSleepTimer = useCallback((minutes) => {
+    if (minutes === null) {
+      setSleepTimer(null);
+    } else {
+      setSleepTimer(Date.now() + minutes * 60000);
+    }
   }, []);
 
   const [onNext, setOnNext] = useState(null);
@@ -82,6 +108,18 @@ export function PlaybackProvider({ children }) {
     };
   }, []);
 
+  // Sleep timer interval
+  useEffect(() => {
+    if (!sleepTimer) return;
+    const interval = setInterval(() => {
+      if (Date.now() >= sleepTimer) {
+        pause();
+        setSleepTimer(null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sleepTimer, pause]);
+
   // Keep a ref to the latest handlers so we don't need to re-register action handlers
   const handlersRef = useRef({ onNext, onPrev, play, pause, stop, currentBook, isPlaying });
   useEffect(() => {
@@ -106,6 +144,12 @@ export function PlaybackProvider({ children }) {
       navigator.mediaSession.setActionHandler('previoustrack', () => {
         if (handlersRef.current.onPrev) handlersRef.current.onPrev();
       });
+      navigator.mediaSession.setActionHandler('seekforward', () => {
+        if (handlersRef.current.onNext) handlersRef.current.onNext();
+      });
+      navigator.mediaSession.setActionHandler('seekbackward', () => {
+        if (handlersRef.current.onPrev) handlersRef.current.onPrev();
+      });
     }
     return () => {
       if ('mediaSession' in navigator) {
@@ -114,6 +158,8 @@ export function PlaybackProvider({ children }) {
         navigator.mediaSession.setActionHandler('stop', null);
         navigator.mediaSession.setActionHandler('nexttrack', null);
         navigator.mediaSession.setActionHandler('previoustrack', null);
+        navigator.mediaSession.setActionHandler('seekforward', null);
+        navigator.mediaSession.setActionHandler('seekbackward', null);
       }
     };
   }, []);
@@ -125,11 +171,17 @@ export function PlaybackProvider({ children }) {
       progress,
       volume,
       speed,
+      voice,
+      pitch,
+      sleepTimer,
       onNext,
       onPrev,
       setProgress,
       setVolume,
       setSpeed,
+      setVoice,
+      setPitch,
+      startSleepTimer,
       setOnNext,
       setOnPrev,
       play,

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -30,6 +30,8 @@ import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight,
 import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
 import FlashcardsPanel from './FlashcardsPanel';
+import ExportModal from './ExportModal';
+import QuoteShareModal from './QuoteShareModal';
 
 function Reader({ bookData, onBack, addToast }) {
   const viewerRef = useRef(null);
@@ -53,6 +55,8 @@ function Reader({ bookData, onBack, addToast }) {
   const [showHighlights, setShowHighlights] = useState(false);
   const [showFlashcards, setShowFlashcards] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [quoteShareData, setQuoteShareData] = useState(null); // { text, bookTitle, bookAuthor }
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -186,8 +190,8 @@ function Reader({ bookData, onBack, addToast }) {
 
   useEffect(() => {
     if (bookData?.id) {
-      setBookmarks(getBookmarks(bookData.id));
-      setHighlights(getHighlights(bookData.id));
+      getBookmarks(bookData.id).then(setBookmarks);
+      getHighlights(bookData.id).then(setHighlights);
     }
   }, [bookData?.id]);
 
@@ -358,18 +362,19 @@ function Reader({ bookData, onBack, addToast }) {
               true
             );
 
-            const bookHighlights = getHighlights(bookData.id);
-            bookHighlights.forEach((h) => {
-              try {
-                const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
-                rendition.annotations?.highlight?.(h.cfi, {}, () => { }, 'hl', {
-                  fill: colorInfo.color,
-                  'fill-opacity': '0.4',
-                  'mix-blend-mode': 'multiply',
-                });
-              } catch {
-                // CFI may be in different section.
-              }
+            getHighlights(bookData.id).then((bookHighlights) => {
+              bookHighlights.forEach((h) => {
+                try {
+                  const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === h.color) || HIGHLIGHT_COLORS[0];
+                  rendition.annotations?.highlight?.(h.cfi, {}, () => { }, 'hl', {
+                    fill: colorInfo.color,
+                    'fill-opacity': '0.4',
+                    'mix-blend-mode': 'multiply',
+                  });
+                } catch {
+                  // CFI may be in different section.
+                }
+              });
             });
 
             const fontStyle = settings.fontFamily === 'System' ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' : settings.fontFamily;
@@ -971,6 +976,7 @@ function Reader({ bookData, onBack, addToast }) {
           }
           console.log('Reader: Auto-advancing EPUB section');
           await renditionRef.current.display(next.href);
+          await scrollViewerToTop();
           await new Promise(r => setTimeout(r, 100));
         } else {
           if (playbackPdfPage >= contentTotalPages) {
@@ -980,6 +986,7 @@ function Reader({ bookData, onBack, addToast }) {
           playbackPdfPage += 1;
           currentPageRef.current = playbackPdfPage;
           setCurrentPage(playbackPdfPage);
+          scrollViewerToTop();
           console.log('Reader: Auto-advancing PDF page to', playbackPdfPage);
         }
       }
@@ -1017,24 +1024,29 @@ function Reader({ bookData, onBack, addToast }) {
   };
 
   const scrollViewerToTop = async () => {
-    // Use requestAnimationFrame to ensure DOM is updated before scrolling
+    // Wait two animation frames so the new content/page is fully committed to the DOM
+    await new Promise((r) => requestAnimationFrame(r));
     await new Promise((r) => requestAnimationFrame(r));
 
     if (bookData?.format === 'epub') {
-      // Scroll EPUB iframe to top
+      // Scroll EPUB iframe content to top
       const iframe = viewerRef.current?.querySelector?.('iframe');
       if (iframe?.contentDocument) {
         try {
           iframe.contentDocument.documentElement.scrollTop = 0;
           iframe.contentDocument.body.scrollTop = 0;
+          // Also scroll the outer viewer wrapper in case it is the scroll root
+          viewerRef.current.scrollTop = 0;
         } catch {
           // Ignore cross-origin errors
         }
       }
     } else if (bookData?.format === 'pdf') {
-      // Scroll PDF viewer to top using direct ref
+      // Give the PDF canvas render time to complete, then scroll to top
+      await new Promise((r) => setTimeout(r, 80));
       if (pdfViewerContentRef.current) {
         pdfViewerContentRef.current.scrollTop = 0;
+        pdfViewerContentRef.current.scrollLeft = 0;
       }
     }
   };
@@ -1232,14 +1244,14 @@ function Reader({ bookData, onBack, addToast }) {
     }
   };
 
-  const handleAddHighlight = () => {
+  const handleAddHighlight = async () => {
     if (bookData.format === 'epub') {
       const cfiRange = selectedCfiRangeRef.current;
       const loc = renditionRef.current?.currentLocation?.();
       const cfi = cfiRange || loc?.start?.cfi;
       if (cfi && selectedText) {
-        addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi, text: selectedText, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
           renditionRef.current?.annotations?.highlight?.(cfi, {}, () => { }, 'hl', {
@@ -1253,8 +1265,8 @@ function Reader({ bookData, onBack, addToast }) {
       } else if (cfi) {
         const doc = bookRef.current?.spine?.get(loc?.start?.href)?.document;
         const text = doc?.body?.textContent?.slice(0, 200) || selectedText || '';
-        addHighlight(bookData.id, { cfi, text, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi, text, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
         try {
           const colorInfo = HIGHLIGHT_COLORS.find((c) => c.id === highlightColor) || HIGHLIGHT_COLORS[0];
           renditionRef.current?.annotations?.highlight?.(cfi, {}, () => { }, 'hl', {
@@ -1270,8 +1282,8 @@ function Reader({ bookData, onBack, addToast }) {
       }
     } else {
       if (selectedText) {
-        addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
-        setHighlights(getHighlights(bookData.id));
+        await addHighlight(bookData.id, { cfi: String(currentPage + pdfPageOffset), text: selectedText, color: highlightColor });
+        setHighlights(await getHighlights(bookData.id));
       } else {
         addToast?.('Select text in the PDF first. If selection doesn\'t work, try a different PDF or use EPUB for full highlighting.', 'info');
       }
@@ -1575,6 +1587,13 @@ function Reader({ bookData, onBack, addToast }) {
           >
             <Layers size={18} />
           </button>
+          <button
+            className="control-btn"
+            onClick={() => setShowExport(true)}
+            title="Export Highlights"
+          >
+            <FileText size={18} />
+          </button>
 
           {/* Mobile-only More button — opens drawer */}
           <button
@@ -1701,9 +1720,9 @@ function Reader({ bookData, onBack, addToast }) {
                   <button onClick={() => handleGotoBookmark(bm)}>{bm.text || 'Bookmark'}</button>
                   <button
                     className="remove"
-                    onClick={() => {
-                      removeBookmark(bookData.id, bm.id);
-                      setBookmarks(getBookmarks(bookData.id));
+                    onClick={async () => {
+                      await removeBookmark(bookData.id, bm.id);
+                      setBookmarks(await getBookmarks(bookData.id));
                     }}
                   >
                     <X size={14} />
@@ -1753,23 +1772,32 @@ function Reader({ bookData, onBack, addToast }) {
                       <span className="highlight-swatch" style={{ background: colorInfo.color }} />
                       {h.text || 'Highlight'}
                     </button>
-                    <button
-                      className="remove"
-                      onClick={() => {
-                        if (bookData.format === 'epub') {
-                          try {
-                            renditionRef.current?.annotations?.remove?.(h.cfi, 'highlight');
-                          } catch {
-                            // Ignore scroll-sync edge cases during selection.
+                    <div className="reader-highlight-actions">
+                      <button
+                        className="share"
+                        onClick={() => setQuoteShareData({ text: h.text, bookTitle: bookData.title, bookAuthor: bookData.author })}
+                        title="Share as quote card"
+                      >
+                        <Share2 size={13} />
+                      </button>
+                      <button
+                        className="remove"
+                        onClick={async () => {
+                          if (bookData.format === 'epub') {
+                            try {
+                              renditionRef.current?.annotations?.remove?.(h.cfi, 'highlight');
+                            } catch {
+                              // Ignore scroll-sync edge cases during selection.
+                            }
                           }
-                        }
-                        removeHighlight(bookData.id, h.id);
-                        setHighlights(getHighlights(bookData.id));
-                      }}
-                      title="Delete highlight"
-                    >
-                      <X size={14} />
-                    </button>
+                          await removeHighlight(bookData.id, h.id);
+                          setHighlights(await getHighlights(bookData.id));
+                        }}
+                        title="Delete highlight"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
                   </div>
                 );
               })
@@ -1929,6 +1957,59 @@ function Reader({ bookData, onBack, addToast }) {
         </div>
       </div>
 
+      {/* ===== SELECTION TOOLTIP ===== */}
+      {selectedText && (
+        <div className="reader-selection-tooltip" style={{
+          position: 'absolute',
+          bottom: '100px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-full)',
+          padding: '8px 16px',
+          display: 'flex',
+          gap: '12px',
+          boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
+          zIndex: 1000
+        }}>
+          <button 
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onClick={() => {
+              handleAddHighlight();
+              if (bookData.format === 'epub') {
+                const iframe = viewerRef.current?.querySelector?.('iframe');
+                iframe?.contentDocument?.getSelection?.()?.empty?.();
+              } else {
+                window.getSelection?.()?.empty?.();
+              }
+              setSelectedText('');
+              setSelectionContext('');
+            }}
+          >
+            <Highlighter size={16} color="var(--primary)" /> Highlight
+          </button>
+          <div style={{ width: 1, background: 'var(--border)' }} />
+          <button 
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onClick={() => {
+              navigator.clipboard.writeText(selectedText);
+              addToast?.('Copied to clipboard', 'success');
+              if (bookData.format === 'epub') {
+                const iframe = viewerRef.current?.querySelector?.('iframe');
+                iframe?.contentDocument?.getSelection?.()?.empty?.();
+              } else {
+                window.getSelection?.()?.empty?.();
+              }
+              setSelectedText('');
+              setSelectionContext('');
+            }}
+          >
+            <Bookmark size={16} /> Copy
+          </button>
+        </div>
+      )}
+
       {/* ===== MOBILE OPTIONS DRAWER ===== */}
       {showMobileDrawer && (
         <div className="reader-mobile-drawer-overlay" onClick={() => setShowMobileDrawer(false)}>
@@ -2031,6 +2112,24 @@ function Reader({ bookData, onBack, addToast }) {
             </div>
           </div>
         </div>
+      )}
+
+      {showExport && (
+        <ExportModal 
+          bookData={bookData} 
+          onClose={() => setShowExport(false)} 
+          addToast={addToast} 
+        />
+      )}
+
+      {quoteShareData && (
+        <QuoteShareModal
+          text={quoteShareData.text}
+          bookTitle={quoteShareData.bookTitle}
+          bookAuthor={quoteShareData.bookAuthor}
+          onClose={() => setQuoteShareData(null)}
+          addToast={addToast}
+        />
       )}
 
       {/* ===== MOBILE READER FOOTER ===== */}

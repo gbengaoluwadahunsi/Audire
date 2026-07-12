@@ -15,12 +15,12 @@ function _isAbortError(err) {
  * Fetch MP3 audio for a text chunk from the Edge TTS backend.
  * Returns a Blob or null on failure.
  */
-async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate = 1.0, retries = 2) {
+async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate = 1.0, pitch = 0, retries = 2) {
   const trimmed = (text || '').trim();
   if (!trimmed) return null;
 
   // Serve from the offline cache first (instant + works with no network).
-  const key = cacheKey(trimmed, voice, rate);
+  const key = cacheKey(trimmed, voice, rate, pitch);
   const cached = await getCachedAudio(key);
   if (cached) return cached;
 
@@ -33,7 +33,7 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
       const res = await fetch(_apiUrl('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, voice, rate }),
+        body: JSON.stringify({ text: trimmed, voice, rate, pitch }),
         signal: controller.signal,
       });
 
@@ -70,6 +70,7 @@ export function prewarmFirstChunk() { }
 class TTSManager {
   constructor() {
     this.speed = 1.0;
+    this.pitch = 0;
     this.volume = 1.0;
     this.edgeTtsVoice = 'en-US-AvaMultilingualNeural';
     this.isLoaded = true;
@@ -171,7 +172,7 @@ class TTSManager {
     let lastError;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        blob = await _fetchEdgeTTS(text, this.edgeTtsVoice, this.speed);
+        blob = await _fetchEdgeTTS(text, this.edgeTtsVoice, this.speed, this.pitch);
         if (blob && blob.size >= 100) break;
         lastError = new Error('Empty or too small audio response');
       } catch (err) {
@@ -212,13 +213,13 @@ class TTSManager {
     const chunk = (textChunks[index] || '').trim();
     if (!chunk || chunk.length < 2 || !/[a-zA-ZÀ-ÿ]/.test(chunk)) return null;
 
-    const key = `${chunk}|${this.edgeTtsVoice}|${this.speed}`;
+    const key = `${chunk}|${this.edgeTtsVoice}|${this.speed}|${this.pitch}`;
     const cached = this._blobCache.get(index);
     if (cached?.key === key) return cached.promise;
 
     const promise = (async () => {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
-      return _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed);
+      return _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed, this.pitch);
     })();
     this._blobCache.set(index, { key, promise });
     return promise;
@@ -378,7 +379,7 @@ class TTSManager {
         if (shouldCancel?.()) return;
         const idx = cursor++;
         try {
-          const blob = await _fetchEdgeTTS(speakable[idx], this.edgeTtsVoice, this.speed);
+          const blob = await _fetchEdgeTTS(speakable[idx], this.edgeTtsVoice, this.speed, this.pitch);
           if (blob) ok += 1;
         } catch {
           /* skip failed chunk */
@@ -398,6 +399,10 @@ class TTSManager {
 
   setSpeed(speed) {
     this.speed = speed;
+  }
+
+  setPitch(pitch) {
+    this.pitch = pitch;
   }
 
   setVolume(vol) {

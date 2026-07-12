@@ -9,6 +9,7 @@ function VirtualizedBookGrid({
   onDelete,
   onAddToCollection,
   onEditMetadata,
+  onExport,
   coverErrorIds,
   onCoverError,
   getProgressPercent,
@@ -51,6 +52,9 @@ function VirtualizedBookGrid({
                 <FileText size={40} color="var(--text-tertiary)" />
               )}
               <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
+              {progress >= 99.5 && (
+                <span className="dashboard-book-done-badge">DONE</span>
+              )}
               <button
                 className="dashboard-book-delete"
                 onClick={(e) => { e.stopPropagation(); onDelete(book); }}
@@ -64,6 +68,13 @@ function VirtualizedBookGrid({
                 title="Edit metadata"
               >
                 <Edit size={14} />
+              </button>
+              <button
+                className="dashboard-book-collection"
+                onClick={(e) => { e.stopPropagation(); onExport?.(book); }}
+                title="Export highlights"
+              >
+                <FileText size={14} />
               </button>
               <button
                 className="dashboard-book-collection"

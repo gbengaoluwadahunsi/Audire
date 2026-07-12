@@ -15,8 +15,14 @@ function toEdgeRate(rate) {
   return `${pct >= 0 ? '+' : ''}${pct}%`;
 }
 
+function toEdgePitch(pitch) {
+  const p = Number.isFinite(pitch) ? Math.max(-100, Math.min(pitch, 100)) : 0;
+  if (p === 0) return 'default';
+  return `${p >= 0 ? '+' : ''}${p}Hz`;
+}
+
 router.post('/', async (req, res) => {
-  const { text, voice, rate } = req.body || {};
+  const { text, voice, rate, pitch } = req.body || {};
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
     return res.status(400).json({ error: 'text is required' });
   }
@@ -35,6 +41,7 @@ router.post('/', async (req, res) => {
         voice: chosenVoice,
         outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
         rate: toEdgeRate(typeof rate === 'number' ? rate : 1),
+        pitch: toEdgePitch(typeof pitch === 'number' ? pitch : 0),
         timeout: 30000,
         saveSubtitles: false,
       });

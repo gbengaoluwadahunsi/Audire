@@ -77,7 +77,7 @@ export async function addBookmark(bookId, { cfi, text }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
     return list;
   }
-  const created = await librarySyncCreateBookmark(bookId, { cfi, text: (text || '').slice(0, 500) });
+  await librarySyncCreateBookmark(bookId, cfi, (text || '').slice(0, 500));
   return getBookmarks(bookId);
 }
 
@@ -112,7 +112,7 @@ export async function addHighlight(bookId, { cfi, text, color = 'yellow' }) {
     localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(all));
     return list;
   }
-  await librarySyncCreateHighlight(bookId, { cfi, text: (text || '').slice(0, 2000), color });
+  await librarySyncCreateHighlight(bookId, cfi, (text || '').slice(0, 2000), color);
   return getHighlights(bookId);
 }
 

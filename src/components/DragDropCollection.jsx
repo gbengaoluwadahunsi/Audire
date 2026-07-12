@@ -26,6 +26,7 @@ function SortableBookCard({
   onSelectBook,
   onUndoRemove,
   collectionId,
+  getProgressPercent,
 }) {
   const {
     attributes,
@@ -57,6 +58,9 @@ function SortableBookCard({
           <FileText size={40} color="var(--text-tertiary)" />
         )}
         <span className="dashboard-book-badge">{(book.format || 'epub').toUpperCase()}</span>
+        {getProgressPercent && getProgressPercent(book) >= 99.5 && (
+          <span className="dashboard-book-done-badge">DONE</span>
+        )}
         <button
           className="drag-handle"
           {...attributes}
@@ -103,7 +107,8 @@ function DragDropCollection({
   onSelectBook,
   coverErrorIds,
   onCoverError,
-  searchQuery,
+  searchQuery = '',
+  getProgressPercent,
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -146,6 +151,7 @@ function DragDropCollection({
                 onDelete={onDeleteBook}
                 onSelectBook={onSelectBook}
                 collectionId={collectionId}
+                getProgressPercent={getProgressPercent}
               />
             );
           })}

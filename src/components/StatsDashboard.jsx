@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, BookOpen, Clock, Flame, TrendingUp, Target } from 'lucide-react';
+import { Loader2, BookOpen, Clock, Flame, TrendingUp, Target, Edit2, Check } from 'lucide-react';
 import { getReadingSummary } from '../lib/api';
-import { getGoalProgress } from '../lib/listeningGoal';
+import { getGoalProgress, getGoalMinutes } from '../lib/listeningGoal';
+import { getSettings, saveSettings } from '../lib/settings';
 
 function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '0m';
@@ -15,10 +16,19 @@ export default function StatsDashboard({ addToast }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(30);
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [goalInput, setGoalInput] = useState(() => String(getGoalMinutes()));
+  const [goal, setGoal] = useState(() => getGoalProgress());
 
   useEffect(() => {
     loadSummary();
   }, [period]);
+
+  // Refresh goal progress every 30 seconds
+  useEffect(() => {
+    const id = setInterval(() => setGoal(getGoalProgress()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const loadSummary = async () => {
     setLoading(true);
@@ -31,6 +41,21 @@ export default function StatsDashboard({ addToast }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoalSave = () => {
+    const v = parseInt(goalInput, 10);
+    if (!v || v < 1 || v > 1440) {
+      addToast?.('Please enter a valid number of minutes (1–1440)', 'error');
+      setGoalInput(String(getGoalMinutes()));
+      setEditingGoal(false);
+      return;
+    }
+    const s = getSettings();
+    saveSettings({ ...s, dailyGoalMinutes: v });
+    setGoal(getGoalProgress());
+    setEditingGoal(false);
+    addToast?.(`Daily goal set to ${v} minutes`, 'success');
   };
 
   if (loading) {
@@ -47,7 +72,6 @@ export default function StatsDashboard({ addToast }) {
   const total = summary?.total || {};
   const daily = summary?.daily || [];
   const streak = summary?.streak || 0;
-  const goal = getGoalProgress();
   const goalDeg = Math.round((goal.percent / 100) * 360);
 
   const maxMinutes = Math.max(
@@ -73,9 +97,10 @@ export default function StatsDashboard({ addToast }) {
         </select>
       </div>
 
-      <div className="stats-goal-card">
+      {/* ── Daily Goal Card ── */}
+      <div className={`stats-goal-card ${goal.reached ? 'reached' : ''}`}>
         <div
-          className={`stats-goal-ring ${goal.reached ? 'reached' : ''}`}
+          className="stats-goal-ring"
           style={{ background: `conic-gradient(var(--primary) ${goalDeg}deg, var(--border) ${goalDeg}deg)` }}
         >
           <div className="stats-goal-ring-inner">
@@ -84,16 +109,60 @@ export default function StatsDashboard({ addToast }) {
           </div>
         </div>
         <div className="stats-goal-info">
-          <h3>Today's listening goal</h3>
-          <p>
-            {Math.round(goal.minutes)} of {goal.goalMinutes} min
-            {goal.reached ? ' — goal reached! 🎉' : ''}
-          </p>
+          <div className="stats-goal-info-title">
+            <h3>Today's Goal</h3>
+            {!editingGoal ? (
+              <button
+                className="stats-goal-edit-btn"
+                onClick={() => { setGoalInput(String(goal.goalMinutes)); setEditingGoal(true); }}
+                title="Edit daily goal"
+              >
+                <Edit2 size={14} />
+              </button>
+            ) : (
+              <button className="stats-goal-edit-btn active" onClick={handleGoalSave} title="Save">
+                <Check size={14} />
+              </button>
+            )}
+          </div>
+          {editingGoal ? (
+            <div className="stats-goal-edit-row">
+              <input
+                type="number"
+                className="stats-goal-input"
+                value={goalInput}
+                min={1}
+                max={1440}
+                onChange={(e) => setGoalInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleGoalSave()}
+                autoFocus
+              />
+              <span className="stats-goal-unit">min / day</span>
+            </div>
+          ) : (
+            <p>
+              {Math.round(goal.minutes)} of {goal.goalMinutes} min
+              {goal.reached ? ' — goal reached! 🎉' : ''}
+            </p>
+          )}
         </div>
+        {goal.reached && <div className="stats-goal-confetti">🎉</div>}
       </div>
 
+      {/* ── Streak Banner (if streak > 1) ── */}
+      {streak > 1 && (
+        <div className="stats-streak-banner">
+          <span className="stats-streak-fire">🔥</span>
+          <div className="stats-streak-text">
+            <strong>{streak}-day streak!</strong>
+            <span>Keep it up — you're on fire!</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Summary Cards ── */}
       <div className="stats-cards">
-        <div className="stats-card">
+        <div className={`stats-card ${streak > 0 ? 'streak-active' : ''}`}>
           <div className="stats-card-icon">
             <Flame size={24} />
           </div>
@@ -147,9 +216,10 @@ export default function StatsDashboard({ addToast }) {
               const heightPct = Math.max(4, (minutes / maxMinutes) * 100);
               const date = new Date(day.day);
               const label = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+              const isToday = new Date().toDateString() === date.toDateString();
               return (
                 <div key={i} className="stats-chart-bar-wrapper" title={`${label}: ${minutes}min, ${day.pages} pages`}>
-                  <div className="stats-chart-bar" style={{ height: `${heightPct}%` }}>
+                  <div className={`stats-chart-bar ${isToday ? 'today' : ''}`} style={{ height: `${heightPct}%` }}>
                     <span className="stats-chart-value">{minutes > 0 ? `${minutes}m` : ''}</span>
                   </div>
                   <span className="stats-chart-label">{date.toLocaleDateString('en-US', { weekday: 'short' })}</span>
