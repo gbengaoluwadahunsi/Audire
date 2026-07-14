@@ -4560,6 +4560,36 @@
   }
 }
 
+/* Override reader positioning inside split panes so each Reader
+   fills its pane container instead of the entire viewport */
+.split-pane .reader-view {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.split-pane .reader-sidebar {
+  position: absolute;
+}
+
+/* Compact reader header in split mode */
+.split-pane .reader-header {
+  padding: 6px 10px;
+  gap: 6px;
+}
+
+.split-pane .book-title h2 {
+  font-size: 0.8rem;
+}
+
+.split-pane .book-title p {
+  font-size: 0.65rem;
+}
+
+.split-pane .reader-actions .control-btn {
+  padding: 4px;
+}
+
 /* ==========================================================================
    Split Picker Modal
    ========================================================================== */
