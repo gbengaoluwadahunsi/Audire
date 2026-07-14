@@ -370,31 +370,51 @@ function Dashboard({ onBackToLanding }) {
           addToast={addToast}
         />
         {showSplitPicker && (
-          <div className="modal-overlay" onClick={() => setShowSplitPicker(false)}>
-            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', height: '80vh', display: 'flex', flexDirection: 'column' }}>
-              <div className="modal-header">
-                <h2>Select second book to open in Split View</h2>
-                <button className="close-btn" onClick={() => setShowSplitPicker(false)}>
+          <div className="split-picker-overlay" onClick={() => setShowSplitPicker(false)}>
+            <div className="split-picker-modal" onClick={e => e.stopPropagation()}>
+              <div className="split-picker-header">
+                <div>
+                  <h2>Open in Split View</h2>
+                  <p>Select a book to read alongside <strong>{selectedBook.title}</strong></p>
+                </div>
+                <button className="split-picker-close" onClick={() => setShowSplitPicker(false)}>
                   <X size={20} />
                 </button>
               </div>
-              <div className="modal-body" style={{ flex: 1, overflowY: 'auto' }}>
-                <div className="dashboard-grid">
-                  {books.filter(b => b.id !== selectedBook.id).map(book => (
-                    <div key={book.id} className="book-card" onClick={() => {
-                      setSecondaryBook(book);
-                      setShowSplitPicker(false);
-                    }}>
-                      <div className="book-cover">
-                        {book.cover ? <img src={book.cover} alt="" /> : <div className="book-cover-placeholder">?</div>}
-                      </div>
-                      <div className="book-info">
-                        <h3>{book.title}</h3>
-                        <p>{book.author}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="split-picker-body">
+                {books.filter(b => b.id !== selectedBook.id).length === 0 ? (
+                  <div className="split-picker-empty">
+                    <p>You need at least two books in your library to use Split View.</p>
+                  </div>
+                ) : (
+                  <div className="split-picker-grid">
+                    {books.filter(b => b.id !== selectedBook.id).map(book => (
+                      <button
+                        key={book.id}
+                        className="split-picker-card"
+                        onClick={() => {
+                          setSecondaryBook(book);
+                          setShowSplitPicker(false);
+                        }}
+                      >
+                        <div className="split-picker-cover">
+                          {book.cover ? (
+                            <img src={book.cover} alt="" loading="lazy" />
+                          ) : (
+                            <div className="split-picker-cover-placeholder">
+                              {(book.title || '?')[0]}
+                            </div>
+                          )}
+                        </div>
+                        <div className="split-picker-info">
+                          <span className="split-picker-title">{book.title}</span>
+                          <span className="split-picker-author">{book.author || 'Unknown Author'}</span>
+                          <span className="split-picker-format">{(book.format || '').toUpperCase()}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
