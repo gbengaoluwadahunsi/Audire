@@ -20,6 +20,7 @@ import MetadataEditor from './MetadataEditor';
 import StatsDashboard from './StatsDashboard';
 import { ToastContainer } from './Toast';
 import VirtualizedBookGrid from './VirtualizedBookGrid';
+import SplitView from './SplitView';
 import DragDropCollection from './DragDropCollection';
 import ExportModal from './ExportModal';
 
@@ -54,6 +55,8 @@ function Dashboard({ onBackToLanding }) {
   const [collections, setCollections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedBook, setSelectedBook] = useState(null);
+  const [secondaryBook, setSecondaryBook] = useState(null);
+  const [showSplitPicker, setShowSplitPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState([]);
@@ -344,13 +347,59 @@ function Dashboard({ onBackToLanding }) {
     });
 
   if (selectedBook) {
+    if (secondaryBook) {
+      return (
+        <SplitView
+          book1={selectedBook}
+          book2={secondaryBook}
+          onBack1={() => setSelectedBook(null)}
+          onBack2={() => setSecondaryBook(null)}
+          onOpenBook={setSelectedBook}
+          addToast={addToast}
+        />
+      );
+    }
+    
     return (
-      <Reader
-        bookData={selectedBook}
-        onBack={() => { loadBooks(); setSelectedBook(null); }}
-        onOpenBook={setSelectedBook}
-        addToast={addToast}
-      />
+      <>
+        <Reader
+          bookData={selectedBook}
+          onBack={() => { loadBooks(); setSelectedBook(null); }}
+          onOpenBook={setSelectedBook}
+          onSplitScreen={() => setShowSplitPicker(true)}
+          addToast={addToast}
+        />
+        {showSplitPicker && (
+          <div className="modal-overlay" onClick={() => setShowSplitPicker(false)}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', height: '80vh', display: 'flex', flexDirection: 'column' }}>
+              <div className="modal-header">
+                <h2>Select second book to open in Split View</h2>
+                <button className="close-btn" onClick={() => setShowSplitPicker(false)}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="modal-body" style={{ flex: 1, overflowY: 'auto' }}>
+                <div className="dashboard-grid">
+                  {books.filter(b => b.id !== selectedBook.id).map(book => (
+                    <div key={book.id} className="book-card" onClick={() => {
+                      setSecondaryBook(book);
+                      setShowSplitPicker(false);
+                    }}>
+                      <div className="book-cover">
+                        {book.cover ? <img src={book.cover} alt="" /> : <div className="book-cover-placeholder">?</div>}
+                      </div>
+                      <div className="book-info">
+                        <h3>{book.title}</h3>
+                        <p>{book.author}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
 

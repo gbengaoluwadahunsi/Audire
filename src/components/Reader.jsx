@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -33,13 +33,13 @@ import FlashcardsPanel from './FlashcardsPanel';
 import ExportModal from './ExportModal';
 import QuoteShareModal from './QuoteShareModal';
 
-function Reader({ bookData, onBack, addToast }) {
+function Reader({ bookData, onBack, onSplitScreen, addToast }) {
   const viewerRef = useRef(null);
   const renditionRef = useRef(null);
   const bookRef = useRef(null);
   const pdfRef = useRef(null);
 
-  const { play, pause, setProgress: setPlaybackProgress, setOnNext, setOnPrev } = usePlayback();
+  const { play, pause, setProgress: setPlaybackProgress, setOnNext, setOnPrev, currentBook } = usePlayback();
 
   const [isPlayingTTS, setIsPlayingTTS] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
@@ -1159,13 +1159,15 @@ function Reader({ bookData, onBack, addToast }) {
 
   // Register next/prev with PlaybackContext so MiniPlayer skip buttons work
   useEffect(() => {
-    setOnNext(() => nextPage);
-    setOnPrev(() => prevPage);
-    return () => {
-      setOnNext(null);
-      setOnPrev(null);
-    };
-  }, [bookData?.id, totalPages, currentPage, pdfPageOffset, isPlayingTTS]);
+    if (currentBook?.id === bookData.id || !currentBook) {
+      setOnNext(() => nextPage);
+      setOnPrev(() => prevPage);
+      return () => {
+        setOnNext(null);
+        setOnPrev(null);
+      };
+    }
+  }, [bookData?.id, totalPages, currentPage, pdfPageOffset, isPlayingTTS, currentBook?.id]);
 
   const handleAddBookmark = () => {
     if (bookData.format === 'epub') {
@@ -1594,6 +1596,15 @@ function Reader({ bookData, onBack, addToast }) {
           >
             <FileText size={18} />
           </button>
+          {onSplitScreen && (
+            <button
+              className="control-btn"
+              onClick={onSplitScreen}
+              title="Split Screen Reading"
+            >
+              <Columns size={18} />
+            </button>
+          )}
 
           {/* Mobile-only More button — opens drawer */}
           <button
