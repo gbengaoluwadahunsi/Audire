@@ -352,9 +352,14 @@ function Dashboard({ onBackToLanding }) {
         <SplitView
           book1={selectedBook}
           book2={secondaryBook}
-          onBack1={() => setSelectedBook(null)}
-          onBack2={() => setSecondaryBook(null)}
+          onBack1={() => { setSelectedBook(null); setSecondaryBook(null); }}
+          onBack2={() => { setSelectedBook(null); setSecondaryBook(null); }}
           onOpenBook={setSelectedBook}
+          onCloseSplit1={() => setSecondaryBook(null)}
+          onCloseSplit2={() => {
+            setSelectedBook(secondaryBook);
+            setSecondaryBook(null);
+          }}
           addToast={addToast}
         />
       );

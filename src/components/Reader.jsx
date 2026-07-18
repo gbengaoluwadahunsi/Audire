@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -33,15 +33,15 @@ import FlashcardsPanel from './FlashcardsPanel';
 import ExportModal from './ExportModal';
 import QuoteShareModal from './QuoteShareModal';
 
-function Reader({ bookData, onBack, onSplitScreen, addToast }) {
+function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
   const viewerRef = useRef(null);
   const renditionRef = useRef(null);
   const bookRef = useRef(null);
   const pdfRef = useRef(null);
 
-  const { play, pause, setProgress: setPlaybackProgress, setOnNext, setOnPrev, currentBook } = usePlayback();
+  const { play, pause, setProgress: setPlaybackProgress, setOnNext, setOnPrev, currentBook, isPlaying } = usePlayback();
 
-  const [isPlayingTTS, setIsPlayingTTS] = useState(false);
+  const isPlayingTTS = currentBook?.id === bookData.id && isPlaying;
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -235,18 +235,7 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
     return () => clearInterval(id);
   }, [isPlayingTTS]);
 
-  // Keep the in-app play/pause button in sync when the user controls playback
-  // from the phone lock screen / notification (MediaSession).
-  useEffect(() => {
-    const onPause = () => setIsPlayingTTS(false);
-    const onResume = () => { if (ttsManager.hasActivePlayback || ttsManager.isPaused) setIsPlayingTTS(true); };
-    window.addEventListener('audire-tts-pause', onPause);
-    window.addEventListener('audire-tts-resume', onResume);
-    return () => {
-      window.removeEventListener('audire-tts-pause', onPause);
-      window.removeEventListener('audire-tts-resume', onResume);
-    };
-  }, []);
+
 
   useEffect(() => {
     if (bookData?.format !== 'pdf' || pdfLoading || totalPages <= 0 || !pdfRef.current) return;
@@ -696,20 +685,25 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
     // 1. If actually playing, then PAUSE
     if (isPlayingTTS) {
       console.log('Reader: Pausing TTS');
-      setIsPlayingTTS(false);
       ttsManager.pause();
       pause();
       return;
     }
 
     // 2. If it was paused and we have playback to resume, then RESUME
-    if (ttsManager.isPaused && ttsManager.hasActivePlayback) {
+    if (
+      ttsManager.isPaused &&
+      ttsManager.hasActivePlayback &&
+      playbackSessionRef.current === ttsManager.currentSessionId
+    ) {
       console.log('Reader: Resuming TTS');
-      setIsPlayingTTS(true);
       ttsManager.resume();
       play(bookData);
       return;
     }
+
+    // Stop any existing TTS playback globally before starting a new session
+    ttsManager.stop();
 
     // 3. Prevent double-start (ref guard since setState is async)
     if (ttsStartingRef.current) return;
@@ -722,7 +716,6 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
     ttsManager._stopped = false;
 
     console.log('Reader: Starting fresh TTS session', sessionId);
-    setIsPlayingTTS(true);
     setIsTTSLoading(true);
     play(bookData);
 
@@ -751,7 +744,7 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
           console.warn('Reader: PDF not ready for TTS');
           addToast?.('PDF is still loading. Please wait and try again.', 'info');
           setIsTTSLoading(false);
-          setIsPlayingTTS(false);
+          pause();
           return;
         }
       }
@@ -996,12 +989,11 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
     } finally {
       ttsStartingRef.current = false;
       setIsTTSLoading(false); // always clear spinner, even if session changed
-      if (sessionId === playbackSessionRef.current) {
+      if (sessionId === playbackSessionRef.current && currentBook?.id === bookData.id) {
         setIsTTSLoading(false);
         // Only reset global UI states if we truly finished the whole book or errored out
         if (!ttsManager.isPaused) {
           console.log('Reader: Sequence complete, resetting UI');
-          setIsPlayingTTS(false);
           pause();
           ttsManager.stop();
         }
@@ -1012,12 +1004,14 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
   handlePlayPauseRef.current = handlePlayPause;
 
   const stopTTSIfPlaying = () => {
-    const active = isPlayingTTS || ttsManager.isPaused || ttsManager.hasActivePlayback;
+    const active =
+      isPlayingTTS ||
+      (playbackSessionRef.current === ttsManager.currentSessionId &&
+        (ttsManager.isPaused || ttsManager.hasActivePlayback));
     if (active) {
       playbackSessionRef.current = 0;
       ttsManager.stop();
       ttsManager.isPaused = false;
-      setIsPlayingTTS(false);
       setIsTTSLoading(false);
       pause();
     }
@@ -1600,9 +1594,9 @@ function Reader({ bookData, onBack, onSplitScreen, addToast }) {
             <button
               className="control-btn"
               onClick={onSplitScreen}
-              title="Split Screen Reading"
+              title={inSplitView ? "Exit Split View (Maximize)" : "Split Screen Reading"}
             >
-              <Columns size={18} />
+              {inSplitView ? <Maximize2 size={18} /> : <Columns size={18} />}
             </button>
           )}
 
