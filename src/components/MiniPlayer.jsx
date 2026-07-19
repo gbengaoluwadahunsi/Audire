@@ -18,6 +18,30 @@ export default function MiniPlayer({ onOpenBook }) {
   
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
+  const [sleepTimeStr, setSleepTimeStr] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      if (!sleepTimer) {
+        setSleepTimeStr('');
+        return;
+      }
+      const diff = sleepTimer - Date.now();
+      if (diff <= 0) {
+        setSleepTimeStr('');
+      } else {
+        setSleepTimeStr(Math.ceil(diff / 60000) + 'm');
+      }
+    };
+
+    const timerId = setTimeout(update, 0);
+    const intervalId = setInterval(update, 10000);
+
+    return () => {
+      clearTimeout(timerId);
+      clearInterval(intervalId);
+    };
+  }, [sleepTimer]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -45,12 +69,7 @@ export default function MiniPlayer({ onOpenBook }) {
     );
   }
 
-  const formatSleepTime = (ms) => {
-    if (!ms) return '';
-    const diff = ms - Date.now();
-    if (diff <= 0) return '0m';
-    return Math.ceil(diff / 60000) + 'm';
-  };
+
 
   return (
     <div className="dashboard-player">
@@ -140,9 +159,9 @@ export default function MiniPlayer({ onOpenBook }) {
           style={{ position: 'relative' }}
         >
           <SettingsIcon size={20} />
-          {sleepTimer && (
+          {sleepTimeStr && (
             <span style={{ position: 'absolute', top: -6, right: -12, fontSize: '0.65rem', background: 'var(--primary)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>
-              {formatSleepTime(sleepTimer)}
+              {sleepTimeStr}
             </span>
           )}
         </button>
