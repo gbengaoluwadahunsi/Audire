@@ -578,7 +578,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
     const baseViewport = page.getViewport({ scale: 1 });
     const containerW = containerEl?.offsetWidth || 800;
     const displayScale = containerW > 0
-      ? Math.min(2.5, Math.max(0.75, containerW / baseViewport.width))
+      ? Math.min(2.5, Math.max(0.1, containerW / baseViewport.width))
       : 1.25;
     const viewport = page.getViewport({ scale: displayScale });
     const outputScale = Math.min(window.devicePixelRatio || 1, 3);
