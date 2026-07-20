@@ -69,6 +69,7 @@ export function prewarmFirstChunk() { }
 
 class TTSManager {
   constructor() {
+    this.engine = 'edge-tts';
     this.speed = 1.0;
     this.pitch = 0;
     this.volume = 1.0;
@@ -147,6 +148,13 @@ class TTSManager {
     this.isPaused = false;
     this._audioCtx?.resume().catch(() => { });
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+  }
+
+  unlockAudioContext() {
+    const ctx = this._getAudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => { });
+    }
   }
 
   async _waitIfPaused(sessionId) {

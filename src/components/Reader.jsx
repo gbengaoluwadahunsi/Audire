@@ -675,6 +675,13 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
     if (now - lastPlayToggleAtRef.current < 250) return;
     lastPlayToggleAtRef.current = now;
 
+    // Synchronously unlock/resume AudioContext under the user gesture context
+    try {
+      ttsManager.unlockAudioContext();
+    } catch {
+      // Ignore context errors.
+    }
+
     // Unlock audio for delayed playback (browser autoplay policy)
     try {
       const silent = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');

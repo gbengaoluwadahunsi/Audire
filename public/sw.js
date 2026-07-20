@@ -1,4 +1,4 @@
-const CACHE = 'audire-v9';
+const CACHE = 'audire-v10';
 
 const PRECACHE = [
   '/',
