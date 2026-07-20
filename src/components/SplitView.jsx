@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Reader from './Reader';
 import { usePlayback } from '../context/PlaybackContext';
 
-function SplitView({ book1, book2, onBack1, onBack2, onOpenBook, onCloseSplit1, onCloseSplit2, addToast }) {
+function SplitView({ book1, book2, onBack1, onBack2, onOpenBook, onCloseSplit1, onCloseSplit2, onProgressUpdate, addToast }) {
   const { currentBook, setCurrentBook } = usePlayback();
   
   // By default, make book1 the active context for TTS
@@ -55,6 +55,7 @@ function SplitView({ book1, book2, onBack1, onBack2, onOpenBook, onCloseSplit1, 
           onOpenBook={onOpenBook}
           inSplitView={true}
           onSplitScreen={onCloseSplit1}
+          onProgressUpdate={onProgressUpdate}
           addToast={addToast}
         />
       </div>
@@ -83,6 +84,7 @@ function SplitView({ book1, book2, onBack1, onBack2, onOpenBook, onCloseSplit1, 
           onOpenBook={onOpenBook}
           inSplitView={true}
           onSplitScreen={onCloseSplit2}
+          onProgressUpdate={onProgressUpdate}
           addToast={addToast}
         />
       </div>

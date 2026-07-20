@@ -33,7 +33,7 @@ import FlashcardsPanel from './FlashcardsPanel';
 import ExportModal from './ExportModal';
 import QuoteShareModal from './QuoteShareModal';
 
-function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
+function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate, addToast }) {
   const viewerRef = useRef(null);
   const renditionRef = useRef(null);
   const bookRef = useRef(null);
@@ -446,6 +446,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
             const percent = pct * 100;
             setProgress(percent);
             updateBookProgress(bookData.id, location.start.cfi, percent).catch(() => { });
+            onProgressUpdate?.(bookData.id, location.start.cfi);
             setPlaybackProgress(percent);
           });
         } catch (err) {
@@ -546,6 +547,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
     const pct = (contentPageNum / contentTotal) * 100;
     setProgress(pct);
     updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => { });
+    onProgressUpdate?.(bookData.id, String(phys));
     if (pdfCanvasRef.current) await renderPdfPage(phys);
   };
 
@@ -885,6 +887,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, addToast }) {
             const pct = (playbackPdfPage / ct) * 100;
             setProgress(pct);
             updateBookProgress(bookData.id, String(phys), pct, pdfRef.current.numPages).catch(() => { });
+            onProgressUpdate?.(bookData.id, String(phys));
           }
           if (!chunks?.length) {
             if (skipped >= MAX_SKIP_PAGES) {

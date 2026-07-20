@@ -73,6 +73,7 @@ function Dashboard({ onBackToLanding }) {
   const [showCollectionDeleteConfirm, setShowCollectionDeleteConfirm] = useState(null);
   const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
   const [exportBook, setExportBook] = useState(null);
+  const [splitPickerSearch, setSplitPickerSearch] = useState('');
   const fileInputRef = useRef(null);
   const [coverErrorIds, setCoverErrorIds] = useState(() => new Set());
   const coverRepairAttempted = useRef(new Set());
@@ -119,6 +120,13 @@ function Dashboard({ onBackToLanding }) {
   const removeToast = (id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
+
+  // Keep last_cfi in-memory fresh so switching books in split view restores the correct page.
+  const handleProgressUpdate = React.useCallback((bookId, cfi) => {
+    setBooks(prev => prev.map(b => b.id === bookId ? { ...b, last_cfi: cfi } : b));
+    setSelectedBook(prev => (prev?.id === bookId ? { ...prev, last_cfi: cfi } : prev));
+    setSecondaryBook(prev => (prev?.id === bookId ? { ...prev, last_cfi: cfi } : prev));
+  }, []);
 
   useEffect(() => {
     loadBooks();
@@ -360,6 +368,7 @@ function Dashboard({ onBackToLanding }) {
             setSelectedBook(secondaryBook);
             setSecondaryBook(null);
           }}
+          onProgressUpdate={handleProgressUpdate}
           addToast={addToast}
         />
       );
@@ -371,7 +380,8 @@ function Dashboard({ onBackToLanding }) {
           bookData={selectedBook}
           onBack={() => { loadBooks(); setSelectedBook(null); }}
           onOpenBook={setSelectedBook}
-          onSplitScreen={() => setShowSplitPicker(true)}
+          onSplitScreen={() => { setSplitPickerSearch(''); setShowSplitPicker(true); }}
+          onProgressUpdate={handleProgressUpdate}
           addToast={addToast}
         />
         {showSplitPicker && (
@@ -386,14 +396,45 @@ function Dashboard({ onBackToLanding }) {
                   <X size={20} />
                 </button>
               </div>
+              <div className="split-picker-search">
+                <Search size={15} />
+                <input
+                  type="text"
+                  placeholder="Search by title or author…"
+                  value={splitPickerSearch}
+                  onChange={e => setSplitPickerSearch(e.target.value)}
+                  autoFocus
+                  className="split-picker-search-input"
+                />
+                {splitPickerSearch && (
+                  <button className="split-picker-search-clear" onClick={() => setSplitPickerSearch('')}>
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
               <div className="split-picker-body">
-                {books.filter(b => b.id !== selectedBook.id).length === 0 ? (
-                  <div className="split-picker-empty">
-                    <p>You need at least two books in your library to use Split View.</p>
-                  </div>
-                ) : (
-                  <div className="split-picker-grid">
-                    {books.filter(b => b.id !== selectedBook.id).map(book => (
+                {(() => {
+                  const q = splitPickerSearch.toLowerCase().trim();
+                  const filtered = books
+                    .filter(b => b.id !== selectedBook.id)
+                    .filter(b => !q || (b.title || '').toLowerCase().includes(q) || (b.author || '').toLowerCase().includes(q));
+                  if (books.filter(b => b.id !== selectedBook.id).length === 0) {
+                    return (
+                      <div className="split-picker-empty">
+                        <p>You need at least two books in your library to use Split View.</p>
+                      </div>
+                    );
+                  }
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="split-picker-empty">
+                        <p>No books match <strong>{splitPickerSearch}</strong></p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="split-picker-grid">
+                      {filtered.map(book => (
                       <button
                         key={book.id}
                         className="split-picker-card"
@@ -412,14 +453,15 @@ function Dashboard({ onBackToLanding }) {
                           )}
                         </div>
                         <div className="split-picker-info">
-                          <span className="split-picker-title">{book.title}</span>
-                          <span className="split-picker-author">{book.author || 'Unknown Author'}</span>
-                          <span className="split-picker-format">{(book.format || '').toUpperCase()}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                            <span className="split-picker-title">{book.title}</span>
+                            <span className="split-picker-author">{book.author || 'Unknown Author'}</span>
+                            <span className="split-picker-format">{(book.format || '').toUpperCase()}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
