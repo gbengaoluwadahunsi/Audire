@@ -4742,7 +4742,39 @@
   gap: 8px;
 }
 
+
+.split-picker-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1.5px dashed rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md, 12px);
+  color: #f87171;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 6px;
+}
+
+.split-picker-remove-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: #ef4444;
+  color: #ef4444;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+}
+
+.split-picker-remove-btn:active {
+  transform: translateY(0);
+}
+
 .split-picker-card {
+
   display: flex;
   align-items: center;
   gap: 14px;

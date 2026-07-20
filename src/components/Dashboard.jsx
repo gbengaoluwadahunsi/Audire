@@ -56,7 +56,7 @@ function Dashboard({ onBackToLanding }) {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedBook, setSelectedBook] = useState(null);
   const [secondaryBook, setSecondaryBook] = useState(null);
-  const [showSplitPicker, setShowSplitPicker] = useState(false);
+  const [splitPickerMode, setSplitPickerMode] = useState(null); // null, 'split', 'left', 'right'
   const [isUploading, setIsUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState([]);
@@ -360,8 +360,8 @@ function Dashboard({ onBackToLanding }) {
         <SplitView
           book1={selectedBook}
           book2={secondaryBook}
-          onBack1={() => { setSelectedBook(null); setSecondaryBook(null); }}
-          onBack2={() => { setSelectedBook(null); setSecondaryBook(null); }}
+          onBack1={() => { setSplitPickerSearch(''); setSplitPickerMode('left'); }}
+          onBack2={() => { setSplitPickerSearch(''); setSplitPickerMode('right'); }}
           onOpenBook={setSelectedBook}
           onCloseSplit1={() => setSecondaryBook(null)}
           onCloseSplit2={() => {
@@ -380,19 +380,31 @@ function Dashboard({ onBackToLanding }) {
           bookData={selectedBook}
           onBack={() => { loadBooks(); setSelectedBook(null); }}
           onOpenBook={setSelectedBook}
-          onSplitScreen={() => { setSplitPickerSearch(''); setShowSplitPicker(true); }}
+          onSplitScreen={() => { setSplitPickerSearch(''); setSplitPickerMode('split'); }}
           onProgressUpdate={handleProgressUpdate}
           addToast={addToast}
         />
-        {showSplitPicker && (
-          <div className="split-picker-overlay" onClick={() => setShowSplitPicker(false)}>
+        {splitPickerMode && (
+          <div className="split-picker-overlay" onClick={() => setSplitPickerMode(null)}>
             <div className="split-picker-modal" onClick={e => e.stopPropagation()}>
               <div className="split-picker-header">
                 <div>
-                  <h2>Open in Split View</h2>
-                  <p>Select a book to read alongside <strong>{selectedBook.title}</strong></p>
+                  <h2>{
+                    splitPickerMode === 'left' ? "Change Left Book" :
+                    splitPickerMode === 'right' ? "Change Right Book" :
+                    "Open in Split View"
+                  }</h2>
+                  <p>
+                    {splitPickerMode === 'left' ? (
+                      <>Select a book to replace <strong>{selectedBook?.title}</strong></>
+                    ) : splitPickerMode === 'right' ? (
+                      <>Select a book to replace <strong>{secondaryBook?.title}</strong></>
+                    ) : (
+                      <>Select a book to read alongside <strong>{selectedBook?.title}</strong></>
+                    )}
+                  </p>
                 </div>
-                <button className="split-picker-close" onClick={() => setShowSplitPicker(false)}>
+                <button className="split-picker-close" onClick={() => setSplitPickerMode(null)}>
                   <X size={20} />
                 </button>
               </div>
@@ -415,13 +427,17 @@ function Dashboard({ onBackToLanding }) {
               <div className="split-picker-body">
                 {(() => {
                   const q = splitPickerSearch.toLowerCase().trim();
+                  const excludeId = splitPickerMode === 'left' ? secondaryBook?.id : selectedBook?.id;
                   const filtered = books
-                    .filter(b => b.id !== selectedBook.id)
+                    .filter(b => b.id !== excludeId)
                     .filter(b => !q || (b.title || '').toLowerCase().includes(q) || (b.author || '').toLowerCase().includes(q));
-                  if (books.filter(b => b.id !== selectedBook.id).length === 0) {
+
+                  const totalAvailable = books.filter(b => b.id !== excludeId).length;
+
+                  if (totalAvailable === 0) {
                     return (
                       <div className="split-picker-empty">
-                        <p>You need at least two books in your library to use Split View.</p>
+                        <p>No other books are available in your library.</p>
                       </div>
                     );
                   }
@@ -434,13 +450,38 @@ function Dashboard({ onBackToLanding }) {
                   }
                   return (
                     <div className="split-picker-grid">
+                      {splitPickerMode !== 'split' && (
+                        <button
+                          className="split-picker-remove-btn"
+                          onClick={() => {
+                            if (splitPickerMode === 'left') {
+                              setSelectedBook(secondaryBook);
+                              setSecondaryBook(null);
+                            } else if (splitPickerMode === 'right') {
+                              setSecondaryBook(null);
+                            }
+                            setSplitPickerMode(null);
+                          }}
+                        >
+                          <X size={16} />
+                          <span>{
+                            splitPickerMode === 'left' ? "Close Left Pane" : "Close Right Pane"
+                          } (Exit Split View)</span>
+                        </button>
+                      )}
                       {filtered.map(book => (
                       <button
                         key={book.id}
                         className="split-picker-card"
                         onClick={() => {
-                          setSecondaryBook(book);
-                          setShowSplitPicker(false);
+                          if (splitPickerMode === 'split') {
+                            setSecondaryBook(book);
+                          } else if (splitPickerMode === 'left') {
+                            setSelectedBook(book);
+                          } else if (splitPickerMode === 'right') {
+                            setSecondaryBook(book);
+                          }
+                          setSplitPickerMode(null);
                         }}
                       >
                         <div className="split-picker-cover">
