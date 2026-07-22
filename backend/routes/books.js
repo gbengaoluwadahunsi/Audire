@@ -23,6 +23,28 @@ async function ensureDirs() {
 }
 ensureDirs();
 
+const METADATA_FILE = path.join(UPLOAD_BASE, 'metadata.json');
+
+async function readLocalMetadata() {
+  try {
+    const data = await fs.readFile(METADATA_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return {};
+  }
+}
+
+async function writeLocalMetadata(meta) {
+  await fs.writeFile(METADATA_FILE, JSON.stringify(meta, null, 2), 'utf-8');
+}
+
+async function updateLocalMetadata(bookId, updates) {
+  const meta = await readLocalMetadata();
+  meta[bookId] = { ...(meta[bookId] || {}), ...updates };
+  await writeLocalMetadata(meta);
+  return meta[bookId];
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, BOOKS_DIR);
@@ -131,6 +153,7 @@ router.get('/', async (req, res) => {
     console.warn('Fetch books database error (falling back to local disk files):', err.message);
     try {
       const files = await fs.readdir(BOOKS_DIR).catch(() => []);
+      const allLocalMeta = await readLocalMetadata();
       const diskBooks = [];
       for (const file of files) {
         const ext = path.extname(file).toLowerCase();
@@ -139,15 +162,17 @@ router.get('/', async (req, res) => {
         const stats = await fs.stat(path.join(BOOKS_DIR, file)).catch(() => null);
         const hasCover = await coverFileExists(id);
         
-        // Clean title formatting from UUID or filename
-        const cleanTitle = id.length === 36 && id.includes('-') 
-          ? `${ext.slice(1).toUpperCase()} Document` 
-          : path.basename(file, ext);
+        // Use local metadata for title/author if available
+        const localMeta = allLocalMeta[id] || {};
+        const cleanTitle = localMeta.title
+          || (id.length === 36 && id.includes('-') 
+            ? `${ext.slice(1).toUpperCase()} Document` 
+            : path.basename(file, ext));
 
         diskBooks.push({
           id,
           title: cleanTitle,
-          author: 'Local Library',
+          author: localMeta.author || 'Local Library',
           cover: hasCover ? `${baseUrl}/api/books/${id}/cover` : null,
           file_url: `${baseUrl}/api/books/${id}/file`,
           format: ext.slice(1),
@@ -464,13 +489,27 @@ router.patch('/:id/metadata', async (req, res) => {
     if (!title && !author) {
       return res.status(400).json({ error: 'title or author is required' });
     }
-    const { rows } = await query(
-      `UPDATE books SET title = COALESCE($2, title), author = COALESCE($3, author)
-       WHERE id = $1 RETURNING id, title, author, cover, file_url, format, added_at`,
-      [req.params.id, title || null, author || null]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Book not found' });
-    res.json(rows[0]);
+
+    // Always save to local metadata file (works offline)
+    const localUpdate = {};
+    if (title) localUpdate.title = title;
+    if (author) localUpdate.author = author;
+    await updateLocalMetadata(req.params.id, localUpdate);
+
+    // Try DB update too (may fail if offline)
+    try {
+      const { rows } = await query(
+        `UPDATE books SET title = COALESCE($2, title), author = COALESCE($3, author)
+         WHERE id = $1 RETURNING id, title, author, cover, file_url, format, added_at`,
+        [req.params.id, title || null, author || null]
+      );
+      if (rows.length) return res.json(rows[0]);
+    } catch (dbErr) {
+      console.warn('DB metadata update failed (saved locally):', dbErr.message);
+    }
+
+    // Return local metadata if DB failed
+    res.json({ id: req.params.id, title: title || null, author: author || null });
   } catch (err) {
     console.error('Update metadata error:', err);
     res.status(500).json({ error: err.message });
@@ -498,11 +537,16 @@ router.post('/:id/cover', multer({
     }
     const baseUrl = getBaseUrl(req);
     const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
-    const coverBuffer = await fs.readFile(req.file.path);
-    await query(
-      'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1',
-      [req.params.id, coverUrl, coverBuffer]
-    );
+    // Try DB update but don't fail if offline — cover is already on disk
+    try {
+      const coverBuffer = await fs.readFile(req.file.path);
+      await query(
+        'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1',
+        [req.params.id, coverUrl, coverBuffer]
+      );
+    } catch (dbErr) {
+      console.warn('DB cover update failed (saved locally):', dbErr.message);
+    }
     res.json({ cover: coverUrl });
   } catch (err) {
     console.error('Upload cover error:', err);
