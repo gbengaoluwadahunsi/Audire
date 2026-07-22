@@ -121,15 +121,45 @@ async function coverFileExists(bookId) {
 }
 
 router.get('/', async (req, res) => {
+  const baseUrl = getBaseUrl(req);
   try {
-    const baseUrl = getBaseUrl(req);
     const { rows } = await query(
       `SELECT ${BOOK_COLS} FROM books ORDER BY added_at DESC`
     );
     res.json(rows.map(b => normalizeBookUrls(b, baseUrl)));
   } catch (err) {
-    console.error('Fetch books error:', err);
-    res.status(500).json({ error: err.message });
+    console.warn('Fetch books database error (falling back to local disk files):', err.message);
+    try {
+      const files = await fs.readdir(BOOKS_DIR).catch(() => []);
+      const diskBooks = [];
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (ext !== '.epub' && ext !== '.pdf') continue;
+        const id = path.basename(file, ext);
+        const stats = await fs.stat(path.join(BOOKS_DIR, file)).catch(() => null);
+        const hasCover = await coverFileExists(id);
+        
+        // Clean title formatting from UUID or filename
+        const cleanTitle = id.length === 36 && id.includes('-') 
+          ? `${ext.slice(1).toUpperCase()} Document` 
+          : path.basename(file, ext);
+
+        diskBooks.push({
+          id,
+          title: cleanTitle,
+          author: 'Local Library',
+          cover: hasCover ? `${baseUrl}/api/books/${id}/cover` : null,
+          file_url: `${baseUrl}/api/books/${id}/file`,
+          format: ext.slice(1),
+          added_at: stats?.mtime || new Date(),
+          progress_percent: 0,
+        });
+      }
+      res.json(diskBooks.map(b => normalizeBookUrls(b, baseUrl)));
+    } catch (fallbackErr) {
+      console.error('Disk fallback error:', fallbackErr);
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 
@@ -168,16 +198,9 @@ router.post('/', upload.single('file'), async (req, res) => {
       stream.on('error', reject);
     });
 
-    // Read binary data for Neon storage (only if file is reasonably sized for DB)
-    const MAX_DB_FILE = 50 * 1024 * 1024; // 50MB limit for DB storage
+    // NEVER store giant binary file data inside PostgreSQL bytea columns (prevents Neon DB limit inflation)
     let fileBuffer = null;
     let coverBuffer = null;
-    if (req.file.size <= MAX_DB_FILE) {
-      try { fileBuffer = await fs.readFile(req.file.path); } catch { }
-    }
-    if (coverPath) {
-      try { coverBuffer = await fs.readFile(coverPath); } catch { }
-    }
 
     // Try to check for duplicates using file_hash
     try {
@@ -285,9 +308,24 @@ router.get('/:id/pdf', async (req, res) => {
 });
 
 router.get('/:id/file', async (req, res) => {
+  const { id } = req.params;
+  
+  // First check if physical file exists on local disk
+  const pdfPath = path.join(BOOKS_DIR, `${id}.pdf`);
+  const epubPath = path.join(BOOKS_DIR, `${id}.epub`);
+
   try {
-    const { id } = req.params;
-    // 1. Try serving from Database first (New Neon Storage)
+    await fs.access(pdfPath);
+    return res.sendFile(pdfPath, { headers: { 'Content-Type': 'application/pdf' } });
+  } catch { }
+
+  try {
+    await fs.access(epubPath);
+    return res.sendFile(epubPath, { headers: { 'Content-Type': 'application/epub+zip' } });
+  } catch { }
+
+  // Fallback: Check database bytea if present
+  try {
     const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1', [id]);
     if (rows.length > 0 && rows[0].file_data) {
       const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
@@ -295,23 +333,11 @@ router.get('/:id/file', async (req, res) => {
       res.setHeader('Content-Type', contentType);
       return res.send(rows[0].file_data);
     }
-
-    if (!rows.length) return res.status(404).send('Book not found');
-
-    // 2. Fallback to local disk
-    const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
-    const filePath = path.join(BOOKS_DIR, `${req.params.id}${ext}`);
-    try {
-      await fs.access(filePath);
-    } catch {
-      return res.status(404).send('File not found');
-    }
-    const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
-    res.sendFile(filePath, { headers: { 'Content-Type': contentType } });
   } catch (err) {
-    console.error('Get file error:', err);
-    res.status(500).send('Error');
+    console.warn('File DB query error:', err.message);
   }
+
+  res.status(404).send('File not found');
 });
 
 router.get('/:id/cover', async (req, res) => {
@@ -321,14 +347,7 @@ router.get('/:id/cover', async (req, res) => {
       return res.status(400).json({ error: 'Invalid book ID' });
     }
 
-    // 1. Try serving from Database first (New Neon Storage)
-    const { rows } = await query('SELECT cover_data FROM books WHERE id = $1', [id]);
-    if (rows.length > 0 && rows[0].cover_data) {
-      res.setHeader('Content-Type', 'image/jpeg'); // Generic JPEG, browser sniff handles PNG etc
-      return res.send(rows[0].cover_data);
-    }
-
-    // 2. Fallback to local disk
+    // 1. Try local disk cover first (instant, 0 DB queries)
     const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
     for (const ext of exts) {
       const coverPath = path.join(COVERS_DIR, `${id}${ext}`);
@@ -336,17 +355,24 @@ router.get('/:id/cover', async (req, res) => {
         await fs.access(coverPath);
         return res.sendFile(path.resolve(coverPath));
       } catch {
-        // path not found, continue to next
+        // path not found, continue
       }
     }
-    // Fallback: find any file starting with book id (handles odd extensions)
     const files = await fs.readdir(COVERS_DIR).catch(() => []);
     const match = files.find((f) => f.startsWith(id) && /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
     if (match) {
       return res.sendFile(path.resolve(path.join(COVERS_DIR, match)));
     }
-    // Clear stale cover URL so frontend can retry repair
-    await query('UPDATE books SET cover = NULL WHERE id = $1 AND cover IS NOT NULL', [id]);
+
+    // 2. Fallback to Database bytea if present
+    try {
+      const { rows } = await query('SELECT cover_data FROM books WHERE id = $1', [id]);
+      if (rows.length > 0 && rows[0].cover_data) {
+        res.setHeader('Content-Type', 'image/jpeg');
+        return res.send(rows[0].cover_data);
+      }
+    } catch { }
+
     res.status(404).send('Cover not found');
   } catch (err) {
     console.error('Get cover error:', err);
@@ -362,18 +388,36 @@ router.post('/:id/repair-cover', async (req, res) => {
 
   try {
     await enqueueRepairJob(async () => {
-      const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
-      if (!rows.length) {
-        res.status(404).json({ error: 'Book not found' });
-        return;
+      let bookFormat = 'pdf';
+      let fileExists = false;
+
+      // 1. Try DB lookup first
+      try {
+        const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
+        if (rows.length > 0) {
+          bookFormat = rows[0].format || 'pdf';
+        }
+      } catch { }
+
+      // 2. Check local disk files
+      const pdfPath = path.join(BOOKS_DIR, `${req.params.id}.pdf`);
+      const epubPath = path.join(BOOKS_DIR, `${req.params.id}.epub`);
+
+      let filePath = pdfPath;
+      try {
+        await fs.access(pdfPath);
+        fileExists = true;
+        bookFormat = 'pdf';
+      } catch {
+        try {
+          await fs.access(epubPath);
+          fileExists = true;
+          filePath = epubPath;
+          bookFormat = 'epub';
+        } catch { }
       }
 
-      const book = rows[0];
-      const ext = book.format === 'pdf' ? '.pdf' : '.epub';
-      const filePath = path.join(BOOKS_DIR, `${book.id}${ext}`);
-      try {
-        await fs.access(filePath);
-      } catch {
+      if (!fileExists) {
         res.status(404).json({ error: 'File not found' });
         return;
       }

@@ -28,6 +28,9 @@ pool.on('error', (err) => {
  * Useful for handling Neon cold starts/preemptions on the free tier.
  */
 export async function query(text, params, retry = true) {
+  if (!connStr) {
+    throw new Error('DATABASE_URL is not configured');
+  }
   try {
     const { rows, fields } = await pool.query(text, params);
     return { rows, fields };
