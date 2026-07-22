@@ -241,10 +241,9 @@ router.post('/', upload.single('file'), async (req, res) => {
         await fs.unlink(bookFilePath).catch(() => { });
       }
     } catch (hashErr) {
-      if (hashErr.code === '42703') {
-        console.log('file_hash column not yet in database, skipping duplicate detection');
-      } else {
-        throw hashErr;
+      // DB offline or missing column — skip duplicate detection
+      if (hashErr.code !== '42703') {
+        console.warn('Duplicate check skipped (DB offline):', hashErr.message);
       }
     }
 
@@ -253,41 +252,68 @@ router.post('/', upload.single('file'), async (req, res) => {
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
 
+    // Try DB insert, but don't fail the upload if DB is offline
+    let dbBook = null;
     try {
-      await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-        [
-          bookData.id,
-          bookData.title,
-          bookData.author || null,
-          coverUrl,
-          fileUrl,
-          bookData.format || 'epub',
-          fileHash,
-          fileBuffer,
-          coverBuffer
-        ]
-      );
-    } catch (insertErr) {
-      // Fallback for older schemas without binary columns
-      await query(
-        `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
-        [
-          bookData.id,
-          bookData.title,
-          bookData.author || null,
-          coverUrl,
-          fileUrl,
-          bookData.format || 'epub',
-          fileHash
-        ]
-      );
+      try {
+        await query(
+          `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, file_data, cover_data, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+          [
+            bookData.id,
+            bookData.title,
+            bookData.author || null,
+            coverUrl,
+            fileUrl,
+            bookData.format || 'epub',
+            fileHash,
+            fileBuffer,
+            coverBuffer
+          ]
+        );
+      } catch (insertErr) {
+        // Fallback for older schemas without binary columns
+        await query(
+          `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+          [
+            bookData.id,
+            bookData.title,
+            bookData.author || null,
+            coverUrl,
+            fileUrl,
+            bookData.format || 'epub',
+            fileHash
+          ]
+        );
+      }
+
+      const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [bookData.id]);
+      dbBook = rows[0];
+    } catch (dbErr) {
+      console.warn('DB insert failed (saved locally):', dbErr.message);
     }
 
-    const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [bookData.id]);
-    res.status(201).json(normalizeBookUrls(rows[0], baseUrl));
+    // Always save to local metadata so disk fallback shows real titles
+    await updateLocalMetadata(bookData.id, {
+      title: bookData.title,
+      author: bookData.author || null,
+    });
+
+    if (dbBook) {
+      res.status(201).json(normalizeBookUrls(dbBook, baseUrl));
+    } else {
+      // Return a local-only response
+      res.status(201).json({
+        id: bookData.id,
+        title: bookData.title,
+        author: bookData.author || null,
+        cover: coverUrl,
+        file_url: fileUrl,
+        format: bookData.format || 'epub',
+        added_at: new Date().toISOString(),
+      });
+    }
   } catch (err) {
     console.error('Upload book error:', err);
     res.status(500).json({ error: err.message });
@@ -448,18 +474,24 @@ router.post('/:id/repair-cover', async (req, res) => {
       }
 
       const { extractCover } = await import('../fileProcessor.js');
-      const coverPath = await extractCover(filePath, book.id, book.format, COVERS_DIR);
+      const coverPath = await extractCover(filePath, req.params.id, bookFormat, COVERS_DIR);
 
       // If cover could be extracted, update the database.
+      const baseUrl = getBaseUrl(req);
       if (coverPath) {
-        const baseUrl = getBaseUrl(req);
-        const coverUrl = `${baseUrl}/api/books/${book.id}/cover`;
-        await query('UPDATE books SET cover = $2 WHERE id = $1', [book.id, coverUrl]);
+        try {
+          const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
+          await query('UPDATE books SET cover = $2 WHERE id = $1', [req.params.id, coverUrl]);
+        } catch { }
       }
 
-      const { rows: updated } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [book.id]);
-      const baseUrl = getBaseUrl(req);
-      res.json(normalizeBookUrls(updated[0], baseUrl));
+      try {
+        const { rows: updated } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
+        if (updated.length) return res.json(normalizeBookUrls(updated[0], baseUrl));
+      } catch { }
+
+      // Fallback response if DB is offline
+      res.json({ id: req.params.id, cover: coverPath ? `${baseUrl}/api/books/${req.params.id}/cover` : null });
     });
   } catch (err) {
     console.error('Repair cover error:', err);
@@ -470,12 +502,16 @@ router.post('/:id/repair-cover', async (req, res) => {
 router.patch('/:id/progress', async (req, res) => {
   try {
     const { last_cfi, progress_percent, total_pages } = req.body;
-    await query(
-      `UPDATE books SET last_cfi = COALESCE($2, last_cfi), last_read = now(),
-       progress_percent = COALESCE($3, progress_percent), total_pages = COALESCE($4, total_pages)
-       WHERE id = $1`,
-      [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null]
-    );
+    try {
+      await query(
+        `UPDATE books SET last_cfi = COALESCE($2, last_cfi), last_read = now(),
+         progress_percent = COALESCE($3, progress_percent), total_pages = COALESCE($4, total_pages)
+         WHERE id = $1`,
+        [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null]
+      );
+    } catch (dbErr) {
+      // Silently ignore DB errors when offline — progress is also tracked in-memory on the frontend
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Update progress error:', err);

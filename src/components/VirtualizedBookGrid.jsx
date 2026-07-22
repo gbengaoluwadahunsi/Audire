@@ -63,21 +63,21 @@ function VirtualizedBookGrid({
                 <Trash2 size={14} />
               </button>
               <button
-                className="dashboard-book-collection"
+                className="dashboard-book-edit"
                 onClick={(e) => { e.stopPropagation(); onEditMetadata(book); }}
                 title="Edit metadata"
               >
                 <Edit size={14} />
               </button>
               <button
-                className="dashboard-book-collection"
+                className="dashboard-book-export"
                 onClick={(e) => { e.stopPropagation(); onExport?.(book); }}
                 title="Export highlights"
               >
                 <FileText size={14} />
               </button>
               <button
-                className="dashboard-book-collection"
+                className="dashboard-book-addcol"
                 onClick={(e) => { e.stopPropagation(); onAddToCollection(book); }}
                 title="Add to collection"
               >
