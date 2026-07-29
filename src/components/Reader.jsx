@@ -12,7 +12,7 @@ import {
   getEpubToc,
   searchInBook,
 } from '../lib/fileProcessor';
-import { ocrPdfPage, terminateOcr } from '../lib/ocr';
+import { ocrPdfPage, ocrEpubSection, mergeOcrText, terminateOcr } from '../lib/ocr';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
@@ -820,6 +820,21 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
             console.log('Reader: Extracting text from', currentHref);
             text = await extractTextFromSection(book, currentHref);
             text = (text || '').replace(/\s+/g, ' ').trim();
+
+            // Try OCR on EPUB section if text is short/empty or image-based figure
+            if (text.length <= 15 && bookRef.current) {
+              try {
+                console.log('Reader: EPUB section has little text, running OCR on section images...');
+                const ocrText = await ocrEpubSection(bookRef.current, currentHref);
+                if (ocrText && ocrText.trim().length > 2) {
+                  text = mergeOcrText(text, ocrText);
+                  addToast?.('Extracted text from figure/image via OCR!', 'success');
+                }
+              } catch (e) {
+                console.warn('Reader: EPUB section OCR failed', e);
+              }
+            }
+
             if (text.length > 2) break;
 
             const section = book.spine.get(currentHref);
@@ -840,7 +855,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           chunks = splitIntoSentenceChunks(sanitized);
           if (!chunks.length) chunks = [sanitized.substring(0, 1000)];
         } else {
-          // PDF - skip empty pages, falling back to OCR for scanned pages
+          // PDF - skip empty pages, falling back to OCR for scanned pages & figure images
           const MAX_SKIP_PAGES = 50;
           let skipped = 0;
           let ocrInitialized = false;
@@ -852,28 +867,30 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
             text = await extractTextFromPdfDoc(pdfRef.current, from);
             let clean = (text || '').replace(/\s+/g, ' ').trim();
 
-            // If no embedded text, try OCR
-            if (clean.length <= 2) {
+            // If embedded text is missing or sparse/short (e.g. caption only or scanned figure), run OCR to capture figure writings & diagrams
+            if (clean.length < 150) {
               try {
                 if (!ocrInitialized) {
-                  addToast?.('No selectable text found — initializing OCR engine...', 'info');
+                  addToast?.('Scanning page for figure writings / image text via OCR...', 'info');
                   ocrInitialized = true;
                 }
-                addToast?.(`Scanning page ${playbackPdfPage} with OCR...`, 'info');
-                console.log('Reader: No embedded text, trying OCR on page', from);
+                console.log('Reader: Sparse text on page', from, '(len:', clean.length, '), trying OCR...');
                 const ocrText = await ocrPdfPage(pdfRef.current, from);
-                clean = (ocrText || '').replace(/\s+/g, ' ').trim();
-                if (clean.length > 2) {
-                  addToast?.('OCR text extracted successfully!', 'success');
+                const cleanOcr = (ocrText || '').replace(/\s+/g, ' ').trim();
+                if (cleanOcr.length > 2) {
+                  clean = mergeOcrText(clean, cleanOcr);
+                  addToast?.('Extracted figure/image text via OCR!', 'success');
                 }
               } catch (ocrErr) {
                 console.warn('Reader: OCR failed for page', from, ocrErr?.message);
-                addToast?.(`OCR failed on page ${playbackPdfPage}: ${ocrErr?.message || 'unknown error'}`, 'error');
+                if (clean.length <= 2) {
+                  addToast?.(`OCR failed on page ${playbackPdfPage}: ${ocrErr?.message || 'unknown error'}`, 'error');
+                }
               }
             }
 
             if (clean.length > 2) {
-              text = clean; // Preserve final text (may be from OCR) for UI state
+              text = clean; // Preserve final text (may include merged OCR figure text) for UI state
               const sanitized = sanitizeTextForTTS(clean);
               chunks = splitIntoSentenceChunks(sanitized);
               if (!chunks.length) chunks = [sanitized.substring(0, 1000)];

@@ -159,7 +159,22 @@ export const extractTextFromSection = async (book, href, format = 'epub') => {
                 return '';
             }
 
-            const text = doc.body.textContent || doc.body.innerText || '';
+            let text = doc.body.textContent || doc.body.innerText || '';
+
+            // Also collect alt, title, and aria-label attributes from images/figures
+            const imgs = doc.body.querySelectorAll('img, image, area, figure');
+            const extraTexts = [];
+            imgs.forEach(img => {
+                const alt = img.getAttribute?.('alt') || img.getAttribute?.('title') || img.getAttribute?.('aria-label');
+                if (alt && alt.trim() && !text.toLowerCase().includes(alt.trim().toLowerCase())) {
+                    extraTexts.push(alt.trim());
+                }
+            });
+
+            if (extraTexts.length > 0) {
+                text = (text ? text + '\n\n' : '') + extraTexts.join('. ');
+            }
+
             return text;
         } catch (err) {
             console.error('extractTextFromSection error:', err);
