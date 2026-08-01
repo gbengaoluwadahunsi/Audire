@@ -22,11 +22,12 @@ function saveCollectionsLocal(collections) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(collections));
 }
 
-/** Normalize server row { id, name, bookIds } */
+/** Normalize server row { id, name, parentId, bookIds } */
 function normalizeCollection(c) {
   return {
     id: c.id,
     name: c.name,
+    parentId: c.parentId || c.parent_id || null,
     bookIds: Array.isArray(c.bookIds) ? c.bookIds : [],
   };
 }
@@ -50,15 +51,15 @@ export async function saveCollections(collections) {
   saveCollectionsLocal(collections);
 }
 
-export async function addCollection(name) {
+export async function addCollection(name, parentId = null) {
   if (!isLibrarySyncConfigured()) {
     const cols = getCollectionsLocal();
-    const id = Date.now();
-    cols.push({ id, name, bookIds: [] });
+    const id = String(Date.now());
+    cols.push({ id, name, parentId: parentId || null, bookIds: [] });
     saveCollectionsLocal(cols);
     return cols;
   }
-  const created = await librarySyncCreateCollection(name);
+  await librarySyncCreateCollection(name, parentId);
   return getCollections();
 }
 

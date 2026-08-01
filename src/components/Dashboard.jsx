@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Sun, Moon, X, ArrowLeft, Edit, TrendingUp, BookOpen, Link as LinkIcon } from 'lucide-react';
+import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Folder, ChevronRight, CornerDownRight, Sun, Moon, X, ArrowLeft, Edit, TrendingUp, BookOpen, Link as LinkIcon } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
 import { processFile } from '../lib/fileProcessor';
@@ -8,6 +8,38 @@ import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, deleteBook, repairBookCover, importArticleFromUrl } from '../lib/api';
 import { buildArticleEpub } from '../lib/articleEpub';
 import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
+
+function getCollectionPath(colId, collections) {
+  if (!colId || !collections) return [];
+  const map = new Map(collections.map((c) => [c.id, c]));
+  const path = [];
+  let curr = map.get(colId);
+  const visited = new Set();
+
+  while (curr && !visited.has(curr.id)) {
+    visited.add(curr.id);
+    path.unshift(curr);
+    curr = curr.parentId ? map.get(curr.parentId) : null;
+  }
+
+  return path;
+}
+
+function getCollectionTotalBooks(colId, collections) {
+  if (!colId || !collections) return 0;
+  const map = new Map(collections.map((c) => [c.id, c]));
+  const bookSet = new Set();
+
+  function collect(id) {
+    const col = map.get(id);
+    if (!col) return;
+    (col.bookIds || []).forEach((b) => bookSet.add(b));
+    collections.filter((c) => c.parentId === id).forEach((child) => collect(child.id));
+  }
+
+  collect(colId);
+  return bookSet.size;
+}
 import { getSettings, saveSettings } from '../lib/settings';
 import { ttsManager } from '../lib/ttsManager';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
@@ -882,18 +914,98 @@ function Dashboard({ onBackToLanding }) {
                 {selectedCollection ? (
                   <div className="collection-detail">
                     <header className="collection-detail-header">
-                      <button className="back-btn" onClick={() => { setSelectedCollection(null); setCollectionSearchQuery(''); }}>← All Collections</button>
-                      <div className="collection-info">
-                        <h2>{selectedCollection.name}</h2>
-                        <p>{selectedCollection.bookIds.length} books in this collection</p>
+                      <div className="collection-breadcrumbs" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', marginBottom: '10px', flexWrap: 'wrap' }}>
+                        <button
+                          className="back-btn"
+                          onClick={() => { setSelectedCollection(null); setCollectionSearchQuery(''); }}
+                          style={{ padding: 0, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          Collections
+                        </button>
+                        {getCollectionPath(selectedCollection.id, collections).map((step, idx, arr) => (
+                          <React.Fragment key={step.id}>
+                            <ChevronRight size={14} color="var(--text-tertiary)" />
+                            <button
+                              onClick={() => setSelectedCollection(step)}
+                              style={{
+                                padding: 0, background: 'none', border: 'none', cursor: 'pointer',
+                                color: idx === arr.length - 1 ? 'var(--text-primary)' : 'var(--accent)',
+                                fontWeight: idx === arr.length - 1 ? 600 : 400
+                              }}
+                            >
+                              {step.name}
+                            </button>
+                          </React.Fragment>
+                        ))}
                       </div>
-                      <button
-                        className="danger-outline-btn"
-                        onClick={() => setShowCollectionDeleteConfirm(selectedCollection)}
-                      >
-                        Delete Collection
-                      </button>
+                      <div className="collection-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '12px' }}>
+                        <div>
+                          <h2>{selectedCollection.name}</h2>
+                          <p>
+                            {getCollectionTotalBooks(selectedCollection.id, collections)} book
+                            {getCollectionTotalBooks(selectedCollection.id, collections) !== 1 ? 's' : ''}
+                            {collections.filter(c => c.parentId === selectedCollection.id).length > 0 &&
+                              ` • ${collections.filter(c => c.parentId === selectedCollection.id).length} subfolder(s)`
+                            }
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            className="secondary-btn"
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', padding: '6px 14px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                            onClick={async () => {
+                              const name = prompt(`New subfolder in "${selectedCollection.name}"`);
+                              if (name && name.trim()) {
+                                await addCollection(name.trim(), selectedCollection.id);
+                                setCollections(await getCollections());
+                                addToast(`Subfolder "${name.trim()}" created`, 'success');
+                              }
+                            }}
+                          >
+                            <FolderPlus size={14} /> + New Subfolder
+                          </button>
+                          <button
+                            className="danger-outline-btn"
+                            onClick={() => setShowCollectionDeleteConfirm(selectedCollection)}
+                          >
+                            Delete Folder
+                          </button>
+                        </div>
+                      </div>
                     </header>
+
+                    {/* Render Child Subfolders inside this collection */}
+                    {collections.filter((c) => c.parentId === selectedCollection.id).length > 0 && (
+                      <div className="collection-subfolders-section" style={{ marginBottom: '24px' }}>
+                        <h4 style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Folder size={14} /> Subfolders
+                        </h4>
+                        <div className="dashboard-collections-list">
+                          {collections.filter((c) => c.parentId === selectedCollection.id).map((sub) => {
+                            const subTotalBooks = getCollectionTotalBooks(sub.id, collections);
+                            const childCount = collections.filter((c) => c.parentId === sub.id).length;
+                            return (
+                              <div
+                                key={sub.id}
+                                className="dashboard-collection-card"
+                                onClick={() => setSelectedCollection(sub)}
+                                style={{ padding: '16px', background: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', cursor: 'pointer' }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                  <Folder size={18} color="var(--accent)" />
+                                  <h3 style={{ margin: 0, fontSize: '1rem' }}>{sub.name}</h3>
+                                </div>
+                                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                                  {childCount > 0 ? `${childCount} subfolder${childCount > 1 ? 's' : ''} • ` : ''}
+                                  {subTotalBooks} book{subTotalBooks !== 1 ? 's' : ''}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="dashboard-search" style={{ marginBottom: '16px' }}>
                       <Search size={18} />
                       <input
@@ -960,111 +1072,116 @@ function Dashboard({ onBackToLanding }) {
                     </button>
                   </div>
                 ) : (
-                  <div className="dashboard-collections-list">
-                    {collections.map((c) => {
-                      const visibleBooks = c.bookIds
-                        .map((bid) => books.find((b) => b.id === bid))
-                        .filter(Boolean);
-                      const visibleBookIds = visibleBooks.map((b) => b.id);
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Collections</h2>
+                      <button
+                        className="secondary-btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', padding: '6px 14px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                        onClick={async () => {
+                          const name = prompt('New top-level collection name');
+                          if (name && name.trim()) {
+                            await addCollection(name.trim());
+                            setCollections(await getCollections());
+                            addToast(`Collection "${name.trim()}" created`, 'success');
+                          }
+                        }}
+                      >
+                        <FolderPlus size={14} /> + New Collection
+                      </button>
+                    </div>
 
-                      return (
-                        <div
-                          key={c.id}
-                          className="dashboard-collection-card"
-                          onClick={() => {
-                            setSelectedCollection({ ...c, bookIds: visibleBookIds });
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="dashboard-collection-delete"
-                            title="Rename collection"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const newName = prompt('Rename collection', c.name);
-                              if (newName && newName !== c.name) {
-                                try {
-                                  await fetch(`${import.meta.env.VITE_API_URL || ''}/api/library-sync/collections/${c.id}`, {
-                                    method: 'PATCH',
-                                    headers: {
-                                      'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify({ name: newName }),
-                                  });
-                                  setCollections(await getCollections());
-                                  addToast('Collection renamed', 'success');
-                                } catch (err) {
-                                  addToast('Failed to rename: ' + err.message, 'error');
+                    <div className="dashboard-collections-list">
+                      {collections.filter((c) => !c.parentId).map((c) => {
+                        const totalBooks = getCollectionTotalBooks(c.id, collections);
+                        const childFolders = collections.filter((sub) => sub.parentId === c.id).length;
+                        const visibleBooks = c.bookIds
+                          .map((bid) => books.find((b) => b.id === bid))
+                          .filter(Boolean);
+
+                        return (
+                          <div
+                            key={c.id}
+                            className="dashboard-collection-card"
+                            onClick={() => {
+                              setSelectedCollection(c);
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="dashboard-collection-delete"
+                              title="Rename collection"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const newName = prompt('Rename collection', c.name);
+                                if (newName && newName !== c.name) {
+                                  try {
+                                    await fetch(`${import.meta.env.VITE_API_URL || ''}/api/library-sync/collections/${c.id}`, {
+                                      method: 'PATCH',
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                      },
+                                      body: JSON.stringify({ name: newName }),
+                                    });
+                                    setCollections(await getCollections());
+                                    addToast('Collection renamed', 'success');
+                                  } catch (err) {
+                                    addToast('Failed to rename: ' + err.message, 'error');
+                                  }
                                 }
-                              }
-                            }}
-                          >
-                            <Edit size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="dashboard-collection-delete"
-                            title="Delete collection"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowCollectionDeleteConfirm(c);
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          <h3>{c.name}</h3>
-                          <p>
-                            {visibleBooks.length} book
-                            {visibleBooks.length !== 1 ? 's' : ''}
-                          </p>
-                          {visibleBooks.length === 0 ? (
-                            <div className="dashboard-collection-empty">No books in this collection yet.</div>
-                          ) : (
-                            <div className="dashboard-collection-books">
-                              {visibleBooks.map((b) => (
-                                <div
-                                  key={b.id}
-                                  className="dashboard-collection-book-thumb"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedBook(b);
-                                  }}
-                                >
-                                  {b.cover && !coverErrorIds.has(b.id) ? (
-                                    <img
-                                      src={b.cover}
-                                      alt=""
-                                      onError={() => {
-                                        setCoverErrorIds(prev => new Set([...prev, b.id]));
-                                        setBooks((prev) => prev.map((x) => (x.id === b.id ? { ...x, cover: null } : x)));
-                                        enqueueCoverRepair({ ...b, cover: null }, { refreshList: true });
-                                      }}
-                                    />
-                                  ) : (
-                                    <FileText size={16} />
-                                  )}
-                                  {getProgressPercent(b) >= 99.5 && (
-                                    <span className="dashboard-book-done-badge" style={{ fontSize: '0.5rem', padding: '2px 4px' }}>DONE</span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="dashboard-collection-book-remove"
-                                    title="Remove from collection"
-                                    onClick={async (e) => {
+                              }}
+                            >
+                              <Edit size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="dashboard-collection-delete"
+                              title="Delete collection"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowCollectionDeleteConfirm(c);
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Folder size={20} color="var(--accent)" />
+                              <h3>{c.name}</h3>
+                            </div>
+                            <p>
+                              {childFolders > 0 ? `${childFolders} subfolder${childFolders > 1 ? 's' : ''} • ` : ''}
+                              {totalBooks} book{totalBooks !== 1 ? 's' : ''}
+                            </p>
+                            {visibleBooks.length === 0 ? (
+                              <div className="dashboard-collection-empty">
+                                {childFolders > 0 ? 'Contains subfolders.' : 'No books in this collection yet.'}
+                              </div>
+                            ) : (
+                              <div className="dashboard-collection-books">
+                                {visibleBooks.slice(0, 4).map((b) => (
+                                  <div
+                                    key={b.id}
+                                    className="dashboard-collection-book-thumb"
+                                    onClick={(e) => {
                                       e.stopPropagation();
-                                      await removeBookFromCollection(c.id, b.id);
-                                      setCollections(await getCollections());
+                                      setSelectedBook(b);
                                     }}
                                   >
-                                    <X size={12} />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                                    {b.cover ? (
+                                      <img src={b.cover} alt={b.title} />
+                                    ) : (
+                                      <div className="dashboard-collection-book-placeholder">
+                                        <FileText size={16} />
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </motion.div>
@@ -1154,10 +1271,13 @@ function Dashboard({ onBackToLanding }) {
               <div className="collection-modal-list">
                 {collections.map((c) => {
                   const inCol = c.bookIds.includes(book.id);
+                  const fullPath = getCollectionPath(c.id, collections).map((p) => p.name).join(' / ');
+                  const isSub = !!c.parentId;
                   return (
                     <button
                       key={c.id}
                       type="button"
+                      style={{ paddingLeft: isSub ? '24px' : '12px', display: 'flex', alignItems: 'center', gap: '8px' }}
                       onClick={async () => {
                         if (inCol) await removeBookFromCollection(c.id, book.id);
                         else await addBookToCollection(c.id, book.id);
@@ -1165,7 +1285,8 @@ function Dashboard({ onBackToLanding }) {
                         setShowCollectionMenu(null);
                       }}
                     >
-                      {inCol ? '✓ ' : ''}{c.name}
+                      <Folder size={14} color="var(--accent)" />
+                      <span>{inCol ? '✓ ' : ''}{fullPath}</span>
                     </button>
                   );
                 })}

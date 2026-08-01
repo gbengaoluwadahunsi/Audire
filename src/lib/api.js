@@ -201,10 +201,10 @@ export async function librarySyncFetchCollections() {
   return fetchJson('/api/library-sync/collections');
 }
 
-export async function librarySyncCreateCollection(name) {
+export async function librarySyncCreateCollection(name, parentId = null) {
   return fetchJson('/api/library-sync/collections', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, parentId }),
   });
 }
 

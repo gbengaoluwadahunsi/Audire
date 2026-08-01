@@ -45,9 +45,12 @@ CREATE INDEX IF NOT EXISTS idx_user_highlights_book ON user_highlights(book_id);
 CREATE TABLE IF NOT EXISTS user_collections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
+  parent_id uuid REFERENCES user_collections(id) ON DELETE CASCADE,
   sort_order int DEFAULT 0,
   created_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE user_collections ADD COLUMN IF NOT EXISTS parent_id uuid REFERENCES user_collections(id) ON DELETE CASCADE;
 
 CREATE TABLE IF NOT EXISTS user_collection_books (
   collection_id uuid NOT NULL REFERENCES user_collections(id) ON DELETE CASCADE,

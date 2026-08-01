@@ -145,7 +145,7 @@ router.delete('/highlights/:id', async (req, res) => {
 router.get('/collections', async (req, res) => {
   try {
     const { rows: cols } = await query(
-      'SELECT id, name, sort_order, created_at FROM user_collections ORDER BY sort_order ASC, created_at ASC'
+      'SELECT id, name, parent_id, sort_order, created_at FROM user_collections ORDER BY sort_order ASC, created_at ASC'
     );
     const out = [];
     for (const c of cols) {
@@ -156,6 +156,7 @@ router.get('/collections', async (req, res) => {
       out.push({
         id: c.id,
         name: c.name,
+        parentId: c.parent_id || null,
         bookIds: books.map((b) => b.book_id),
       });
     }
@@ -166,41 +167,62 @@ router.get('/collections', async (req, res) => {
   }
 });
 
-/** POST /collections { name } */
+/** POST /collections { name, parentId } */
 router.post('/collections', async (req, res) => {
   try {
-    const { name } = req.body || {};
+    const { name, parentId } = req.body || {};
     if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name required' });
+    const pid = parentId && UUID.test(parentId) ? parentId : null;
     const { rows: mx } = await query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM user_collections');
     const nextOrder = (mx[0]?.m ?? -1) + 1;
     const { rows } = await query(
-      'INSERT INTO user_collections (name, sort_order) VALUES ($1, $2) RETURNING id, name, sort_order, created_at',
-      [name.trim().slice(0, 200), nextOrder]
+      'INSERT INTO user_collections (name, parent_id, sort_order) VALUES ($1, $2, $3) RETURNING id, name, parent_id, sort_order, created_at',
+      [name.trim().slice(0, 200), pid, nextOrder]
     );
-    res.status(201).json({ id: rows[0].id, name: rows[0].name, bookIds: [] });
+    res.status(201).json({ id: rows[0].id, name: rows[0].name, parentId: rows[0].parent_id || null, bookIds: [] });
   } catch (err) {
     console.error('librarySync collections POST:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-/** PATCH /collections/:id { name } */
+/** PATCH /collections/:id { name, parentId } */
 router.patch('/collections/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'Invalid id' });
-    const { name } = req.body || {};
-    if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name required' });
-    const { rows } = await query(
-      'UPDATE user_collections SET name = $2 WHERE id = $1 RETURNING id, name',
-      [id, name.trim().slice(0, 200)]
-    );
+    const { name, parentId } = req.body || {};
+    const pid = parentId === null ? null : (parentId && UUID.test(parentId) ? parentId : undefined);
+    
+    let rows;
+    if (name && pid !== undefined) {
+      const res = await query(
+        'UPDATE user_collections SET name = $2, parent_id = $3 WHERE id = $1 RETURNING id, name, parent_id',
+        [id, name.trim().slice(0, 200), pid]
+      );
+      rows = res.rows;
+    } else if (name) {
+      const res = await query(
+        'UPDATE user_collections SET name = $2 WHERE id = $1 RETURNING id, name, parent_id',
+        [id, name.trim().slice(0, 200)]
+      );
+      rows = res.rows;
+    } else if (pid !== undefined) {
+      const res = await query(
+        'UPDATE user_collections SET parent_id = $2 WHERE id = $1 RETURNING id, name, parent_id',
+        [id, pid]
+      );
+      rows = res.rows;
+    } else {
+      return res.status(400).json({ error: 'name or parentId required' });
+    }
+
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const { rows: books } = await query(
       'SELECT book_id FROM user_collection_books WHERE collection_id = $1 ORDER BY position ASC',
       [id]
     );
-    res.json({ id: rows[0].id, name: rows[0].name, bookIds: books.map((b) => b.book_id) });
+    res.json({ id: rows[0].id, name: rows[0].name, parentId: rows[0].parent_id || null, bookIds: books.map((b) => b.book_id) });
   } catch (err) {
     console.error('librarySync collections PATCH:', err);
     res.status(500).json({ error: err.message });
