@@ -1,9 +1,8 @@
 import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// Initialize PDF.js worker from local package (avoids cross-origin issues)
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// Use CDN worker to avoid Vercel deployment issues with hashed .mjs files
+pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/build/pdf.worker.min.mjs';
 
 // WASM URL for JBIG2, OpenJPEG, qcms decoders (fixes "Ensure that the wasmUrl API parameter is provided")
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';

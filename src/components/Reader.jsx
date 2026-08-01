@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { ttsManager } from '../lib/ttsManager';
 import { sanitizeTextForTTS, splitIntoSentenceChunks, setSkipJunk } from '../lib/textSanitation';
 import {
@@ -14,7 +13,7 @@ import {
 } from '../lib/fileProcessor';
 import { ocrPdfPage, ocrEpubSection, mergeOcrText, terminateOcr } from '../lib/ocr';
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/build/pdf.worker.min.mjs';
 const PDFJS_WASM_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/wasm/';
 import { updateBookProgress, downloadBookFile, startReadingSession, endReadingSession } from '../lib/api';
 import { getSettings, getPdfOffset, setPdfOffset, saveSettings } from '../lib/settings';
