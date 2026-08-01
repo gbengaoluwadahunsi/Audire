@@ -1178,7 +1178,7 @@ function Dashboard({ onBackToLanding }) {
                               </div>
                             ) : (
                               <div className="dashboard-collection-books">
-                                {visibleBooks.slice(0, 4).map((b) => (
+                                {visibleBooks.map((b) => (
                                   <div
                                     key={b.id}
                                     className="dashboard-collection-book-thumb"
