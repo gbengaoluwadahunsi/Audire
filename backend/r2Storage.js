@@ -56,3 +56,30 @@ export async function uploadToR2(localFilePath, key, contentType) {
   }
   return `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${key}`;
 }
+
+/**
+ * Uploads a Buffer directly to Cloudflare R2 bucket
+ * @param {Buffer} buffer - Binary data buffer
+ * @param {string} key - R2 destination key (e.g. books/uuid.pdf or covers/uuid.png)
+ * @param {string} contentType - MIME type
+ * @returns {Promise<string|null>} - Public R2 URL or null if R2 not configured
+ */
+export async function uploadBufferToR2(buffer, key, contentType) {
+  if (!isR2Configured()) return null;
+
+  const client = getR2Client();
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  });
+
+  await client.send(command);
+
+  if (publicUrlBase) {
+    return `${publicUrlBase}/${key}`;
+  }
+  return `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${key}`;
+}
