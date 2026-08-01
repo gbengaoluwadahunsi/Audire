@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
 import { convertEpubToPdf } from '../epubToPdf.js';
+import { isR2Configured, uploadToR2 } from '../r2Storage.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
 // Supabase is now fully removed, using Neon + Local Storage
@@ -247,10 +248,34 @@ router.post('/', upload.single('file'), async (req, res) => {
       }
     }
 
-    const fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
-    const coverUrl = coverPath
+    let fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
+    let coverUrl = coverPath
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
+
+    // Upload to Cloudflare R2 automatically if configured
+    if (isR2Configured()) {
+      try {
+        const fmt = bookData.format || 'epub';
+        const fileKey = `books/${bookData.id}.${fmt}`;
+        const fileMime = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+        const savedFilePath = path.join(BOOKS_DIR, `${bookData.id}.${fmt}`);
+        
+        const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
+        if (r2FileUrl) fileUrl = r2FileUrl;
+
+        if (coverPath) {
+          const isPng = coverPath.toLowerCase().endsWith('.png');
+          const ext = isPng ? 'png' : 'jpg';
+          const coverKey = `covers/${bookData.id}.${ext}`;
+          const coverMime = isPng ? 'image/png' : 'image/jpeg';
+          const r2CoverUrl = await uploadToR2(coverPath, coverKey, coverMime);
+          if (r2CoverUrl) coverUrl = r2CoverUrl;
+        }
+      } catch (r2Err) {
+        console.warn('R2 upload skipped during POST /api/books:', r2Err.message);
+      }
+    }
 
     // Try DB insert, but don't fail the upload if DB is offline
     let dbBook = null;

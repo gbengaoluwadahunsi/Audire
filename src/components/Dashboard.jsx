@@ -271,41 +271,61 @@ function Dashboard({ onBackToLanding }) {
     if (files.length === 0) return;
 
     setIsUploading(true);
+    const total = files.length;
+    let completed = 0;
+    let successCount = 0;
 
-    for (const file of files) {
-      if (file.size > MAX_ATTEMPT_SIZE) {
-        addToast(`File ${file.name} too large. Max 100 MB.`, 'error');
-        continue;
-      }
+    addToast(`Uploading ${total} book${total > 1 ? 's' : ''}...`, 'info');
 
-      addToast(`Processing ${file.name}...`, 'info');
+    // Process up to 3 files concurrently for fast, responsive batch uploading
+    const MAX_CONCURRENT = 3;
+    let index = 0;
 
-      try {
-        await processFile(file);
-        let uploadBlob = file;
+    const uploadWorker = async () => {
+      while (index < files.length) {
+        const file = files[index++];
+        if (!file) break;
 
-        if (file.size > MAX_SIZE) {
-          addToast(`Compressing ${file.name} to fit 50 MB limit...`, 'info');
-          const { blob, wasCompressed, finalSize } = await compressIfNeeded(file);
-          uploadBlob = blob;
-          if (finalSize > MAX_SIZE) {
-            addToast(`Could not compress ${file.name} under 50 MB.`, 'error');
-            continue;
-          }
-          if (wasCompressed) addToast(`${file.name} compressed successfully, uploading...`, 'info');
+        if (file.size > MAX_ATTEMPT_SIZE) {
+          addToast(`File ${file.name} too large. Max 100 MB.`, 'error');
+          completed++;
+          continue;
         }
 
-        const uploaded = await uploadBook(uploadBlob, file.name);
-        addToast(`"${uploaded.title}" added to library`, 'success');
-      } catch (err) {
-        console.error(`Upload error for ${file.name}:`, err);
-        addToast(toUploadErrorMessage(file.name, err), 'error');
+        try {
+          let uploadBlob = file;
+          if (file.size > MAX_SIZE) {
+            addToast(`Compressing ${file.name}...`, 'info');
+            const { blob, finalSize } = await compressIfNeeded(file);
+            if (finalSize > MAX_SIZE) {
+              addToast(`Could not compress ${file.name} under 50 MB.`, 'error');
+              completed++;
+              continue;
+            }
+            uploadBlob = blob;
+          }
+
+          const uploaded = await uploadBook(uploadBlob, file.name);
+          successCount++;
+          completed++;
+          addToast(`[${completed}/${total}] "${uploaded.title || file.name}" added`, 'success');
+        } catch (err) {
+          console.error(`Upload error for ${file.name}:`, err);
+          completed++;
+          addToast(toUploadErrorMessage(file.name, err), 'error');
+        }
       }
-    }
+    };
+
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT, files.length) }, () => uploadWorker());
+    await Promise.all(workers);
 
     await loadBooks();
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (successCount > 0) {
+      addToast(`Successfully added ${successCount} book${successCount > 1 ? 's' : ''} to your library!`, 'success');
+    }
   };
 
   const handleDelete = async (book) => {
