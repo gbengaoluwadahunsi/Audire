@@ -1,70 +1,91 @@
 import 'dotenv/config';
-import fs from 'fs/promises';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { uploadToR2, isR2Configured } from './r2Storage.js';
+import { isR2Configured, uploadToR2 } from './r2Storage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_BASE = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const BOOKS_DIR = path.join(UPLOAD_BASE, 'books');
 const COVERS_DIR = path.join(UPLOAD_BASE, 'covers');
 
-async function syncAll() {
+async function syncToR2() {
   if (!isR2Configured()) {
-    console.error('❌ Cloudflare R2 environment variables are missing in backend/.env!');
-    console.log('Please set CLOUDFLARE_R2_ACCOUNT_ID, CLOUDFLARE_R2_ACCESS_KEY_ID, and CLOUDFLARE_R2_SECRET_ACCESS_KEY.');
+    console.error('R2 not configured. Set CLOUDFLARE_R2_* env vars.');
     process.exit(1);
   }
 
-  console.log('🚀 Starting Cloudflare R2 Sync...');
+  console.log('=== Syncing local files to Cloudflare R2 ===\n');
 
-  // 1. Sync Books
-  const bookFiles = await fs.readdir(BOOKS_DIR).catch(() => []);
-  console.log(`📚 Found ${bookFiles.length} book files in ${BOOKS_DIR}`);
+  // Sync book files
+  const bookFiles = fs.readdirSync(BOOKS_DIR).filter(f => /\.(pdf|epub)$/i.test(f));
+  console.log(`Found ${bookFiles.length} book files to sync.\n`);
 
-  let uploadedBooks = 0;
-  for (const file of bookFiles) {
-    const ext = path.extname(file).toLowerCase();
-    if (ext !== '.pdf' && ext !== '.epub') continue;
-    const localPath = path.join(BOOKS_DIR, file);
-    const key = `books/${file}`;
-    const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
+  let bookSuccess = 0;
+  let bookSkipped = 0;
+  const CONCURRENT = 5;
 
-    try {
-      console.log(`[Uploading Book] ${file}...`);
-      const url = await uploadToR2(localPath, key, contentType);
-      console.log(`✅ Uploaded: ${url}`);
-      uploadedBooks++;
-    } catch (err) {
-      console.error(`❌ Failed to upload ${file}:`, err.message);
-    }
+  for (let i = 0; i < bookFiles.length; i += CONCURRENT) {
+    const batch = bookFiles.slice(i, i + CONCURRENT);
+    const promises = batch.map(async (file) => {
+      const ext = path.extname(file).toLowerCase();
+      const id = path.basename(file, ext);
+      const key = `books/${id}${ext}`;
+      const mime = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
+      const filePath = path.join(BOOKS_DIR, file);
+
+      try {
+        const url = await uploadToR2(filePath, key, mime);
+        bookSuccess++;
+        console.log(`  [${bookSuccess + bookSkipped}/${bookFiles.length}] ✅ ${file}`);
+      } catch (err) {
+        bookSkipped++;
+        console.log(`  [${bookSuccess + bookSkipped}/${bookFiles.length}] ❌ ${file}: ${err.message}`);
+      }
+    });
+    await Promise.all(promises);
   }
 
-  // 2. Sync Covers
-  const coverFiles = await fs.readdir(COVERS_DIR).catch(() => []);
-  console.log(`🖼️ Found ${coverFiles.length} cover files in ${COVERS_DIR}`);
+  console.log(`\nBooks: ${bookSuccess} uploaded, ${bookSkipped} failed.\n`);
 
-  let uploadedCovers = 0;
-  for (const file of coverFiles) {
-    const ext = path.extname(file).toLowerCase();
-    const localPath = path.join(COVERS_DIR, file);
-    const key = `covers/${file}`;
-    const contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
+  // Sync cover files
+  let coverFiles = [];
+  try {
+    coverFiles = fs.readdirSync(COVERS_DIR).filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
+  } catch { }
+  
+  console.log(`Found ${coverFiles.length} cover files to sync.\n`);
 
-    try {
-      console.log(`[Uploading Cover] ${file}...`);
-      const url = await uploadToR2(localPath, key, contentType);
-      console.log(`✅ Uploaded: ${url}`);
-      uploadedCovers++;
-    } catch (err) {
-      console.error(`❌ Failed to upload cover ${file}:`, err.message);
-    }
+  let coverSuccess = 0;
+  let coverSkipped = 0;
+
+  for (let i = 0; i < coverFiles.length; i += CONCURRENT) {
+    const batch = coverFiles.slice(i, i + CONCURRENT);
+    const promises = batch.map(async (file) => {
+      const ext = path.extname(file).toLowerCase();
+      const id = path.basename(file, ext);
+      const key = `covers/${id}${ext}`;
+      const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
+      const mime = mimeMap[ext] || 'image/jpeg';
+      const filePath = path.join(COVERS_DIR, file);
+
+      try {
+        await uploadToR2(filePath, key, mime);
+        coverSuccess++;
+        console.log(`  [${coverSuccess + coverSkipped}/${coverFiles.length}] ✅ ${file}`);
+      } catch (err) {
+        coverSkipped++;
+        console.log(`  [${coverSuccess + coverSkipped}/${coverFiles.length}] ❌ ${file}: ${err.message}`);
+      }
+    });
+    await Promise.all(promises);
   }
 
-  console.log(`🎉 R2 Sync Complete! Successfully uploaded ${uploadedBooks} books and ${uploadedCovers} covers.`);
+  console.log(`\nCovers: ${coverSuccess} uploaded, ${coverSkipped} failed.`);
+  console.log(`\n=== Sync complete ===`);
 }
 
-syncAll().catch((err) => {
-  console.error('Fatal sync error:', err);
+syncToR2().catch(err => {
+  console.error('Sync failed:', err);
   process.exit(1);
 });

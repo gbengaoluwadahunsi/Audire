@@ -400,17 +400,32 @@ router.get('/:id/file', async (req, res) => {
     return res.sendFile(epubPath, { headers: { 'Content-Type': 'application/epub+zip' } });
   } catch { }
 
-  // Fallback: Check database bytea if present
+  // Fallback: Check if file_url in DB points to R2 and redirect
   try {
-    const { rows } = await query('SELECT format, file_data FROM books WHERE id = $1', [id]);
-    if (rows.length > 0 && rows[0].file_data) {
-      const ext = rows[0].format === 'pdf' ? '.pdf' : '.epub';
-      const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
-      res.setHeader('Content-Type', contentType);
-      return res.send(rows[0].file_data);
+    const { rows } = await query('SELECT format, file_url, file_data FROM books WHERE id = $1', [id]);
+    if (rows.length > 0) {
+      const row = rows[0];
+      // If file_url is an R2 public URL, redirect to it
+      if (row.file_url && /r2\.dev|r2\.cloudflarestorage\.com/i.test(row.file_url)) {
+        return res.redirect(row.file_url);
+      }
+      // If we have R2 configured, try the R2 public URL directly
+      const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
+      if (r2PublicBase) {
+        const fmt = row.format || 'pdf';
+        const r2Url = `${r2PublicBase}/books/${id}.${fmt}`;
+        return res.redirect(r2Url);
+      }
+      // Last resort: bytea from DB
+      if (row.file_data) {
+        const ext = row.format === 'pdf' ? '.pdf' : '.epub';
+        const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
+        res.setHeader('Content-Type', contentType);
+        return res.send(row.file_data);
+      }
     }
   } catch (err) {
-    console.warn('File DB query error:', err.message);
+    console.warn('File DB/R2 fallback error:', err.message);
   }
 
   res.status(404).send('File not found');
@@ -440,12 +455,30 @@ router.get('/:id/cover', async (req, res) => {
       return res.sendFile(path.resolve(path.join(COVERS_DIR, match)));
     }
 
-    // 2. Fallback to Database bytea if present
+    // 2. Fallback: try R2 public URL
+    const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
+    if (r2PublicBase) {
+      // Try common cover extensions on R2
+      for (const ext of ['.png', '.jpg']) {
+        const r2Url = `${r2PublicBase}/covers/${id}${ext}`;
+        try {
+          const probe = await fetch(r2Url, { method: 'HEAD' });
+          if (probe.ok) return res.redirect(r2Url);
+        } catch { }
+      }
+    }
+
+    // 3. Check DB cover URL for R2 redirect
     try {
-      const { rows } = await query('SELECT cover_data FROM books WHERE id = $1', [id]);
-      if (rows.length > 0 && rows[0].cover_data) {
-        res.setHeader('Content-Type', 'image/jpeg');
-        return res.send(rows[0].cover_data);
+      const { rows } = await query('SELECT cover, cover_data FROM books WHERE id = $1', [id]);
+      if (rows.length > 0) {
+        if (rows[0].cover && /r2\.dev|r2\.cloudflarestorage\.com/i.test(rows[0].cover)) {
+          return res.redirect(rows[0].cover);
+        }
+        if (rows[0].cover_data) {
+          res.setHeader('Content-Type', 'image/jpeg');
+          return res.send(rows[0].cover_data);
+        }
       }
     } catch { }
 
