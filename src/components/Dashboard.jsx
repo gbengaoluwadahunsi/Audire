@@ -1194,6 +1194,30 @@ function Dashboard({ onBackToLanding }) {
                                         <FileText size={16} />
                                       </div>
                                     )}
+                                    <button
+                                      type="button"
+                                      className="dashboard-collection-book-remove"
+                                      title="Remove from collection"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        await removeBookFromCollection(c.id, b.id);
+                                        setCollections(await getCollections());
+                                        addToast(`"${b.title}" removed from collection`, 'info');
+                                      }}
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="dashboard-collection-book-delete-btn"
+                                      title="Delete book from library"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowDeleteConfirm(b.id);
+                                      }}
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
                                   </div>
                                 ))}
                               </div>

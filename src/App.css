@@ -1536,25 +1536,46 @@
   position: absolute;
   top: 4px;
   right: 4px;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.75);
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.25);
   opacity: 0;
   transition: opacity 0.2s ease;
+  z-index: 2;
 }
 
-.dashboard-collection-book-thumb:hover .dashboard-collection-book-remove {
+.dashboard-collection-book-delete-btn {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(220, 38, 38, 0.85);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 2;
+}
+
+.dashboard-collection-book-thumb:hover .dashboard-collection-book-remove,
+.dashboard-collection-book-thumb:hover .dashboard-collection-book-delete-btn {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .dashboard-collection-book-remove {
+  .dashboard-collection-book-remove,
+  .dashboard-collection-book-delete-btn {
     opacity: 1;
   }
 }
