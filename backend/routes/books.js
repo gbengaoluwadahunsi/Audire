@@ -248,34 +248,10 @@ router.post('/', upload.single('file'), async (req, res) => {
       }
     }
 
-    let fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
-    let coverUrl = coverPath
+    const fileUrl = `${baseUrl}/api/books/${bookData.id}/file`;
+    const coverUrl = coverPath
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
-
-    // Upload to Cloudflare R2 automatically if configured
-    if (isR2Configured()) {
-      try {
-        const fmt = bookData.format || 'epub';
-        const fileKey = `books/${bookData.id}.${fmt}`;
-        const fileMime = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
-        const savedFilePath = path.join(BOOKS_DIR, `${bookData.id}.${fmt}`);
-        
-        const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
-        if (r2FileUrl) fileUrl = r2FileUrl;
-
-        if (coverPath) {
-          const isPng = coverPath.toLowerCase().endsWith('.png');
-          const ext = isPng ? 'png' : 'jpg';
-          const coverKey = `covers/${bookData.id}.${ext}`;
-          const coverMime = isPng ? 'image/png' : 'image/jpeg';
-          const r2CoverUrl = await uploadToR2(coverPath, coverKey, coverMime);
-          if (r2CoverUrl) coverUrl = r2CoverUrl;
-        }
-      } catch (r2Err) {
-        console.warn('R2 upload skipped during POST /api/books:', r2Err.message);
-      }
-    }
 
     // Try DB insert, but don't fail the upload if DB is offline
     let dbBook = null;
@@ -324,6 +300,38 @@ router.post('/', upload.single('file'), async (req, res) => {
       title: bookData.title,
       author: bookData.author || null,
     });
+
+    // Upload to Cloudflare R2 asynchronously in background to avoid blocking HTTP response & proxy timeouts
+    if (isR2Configured()) {
+      setImmediate(async () => {
+        try {
+          const fmt = bookData.format || 'epub';
+          const fileKey = `books/${bookData.id}.${fmt}`;
+          const fileMime = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+          const savedFilePath = req.file.path;
+          
+          const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
+          let r2CoverUrl = null;
+
+          if (coverPath) {
+            const isPng = coverPath.toLowerCase().endsWith('.png');
+            const ext = isPng ? 'png' : 'jpg';
+            const coverKey = `covers/${bookData.id}.${ext}`;
+            const coverMime = isPng ? 'image/png' : 'image/jpeg';
+            r2CoverUrl = await uploadToR2(coverPath, coverKey, coverMime);
+          }
+
+          if (r2FileUrl || r2CoverUrl) {
+            await query(
+              'UPDATE books SET file_url = COALESCE($2, file_url), cover = COALESCE($3, cover) WHERE id = $1',
+              [bookData.id, r2FileUrl || null, r2CoverUrl || null]
+            ).catch(() => {});
+          }
+        } catch (r2Err) {
+          console.warn('Background R2 upload error:', r2Err.message);
+        }
+      });
+    }
 
     if (dbBook) {
       res.status(201).json(normalizeBookUrls(dbBook, baseUrl));
