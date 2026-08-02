@@ -92,14 +92,17 @@ function normalizeBookUrls(book, baseUrl) {
   let cover = rewriteLegacyLocalhostUrl(book.cover, baseUrl);
   let file_url = rewriteLegacyLocalhostUrl(book.file_url, baseUrl);
 
-  // Legacy Supabase URLs no longer resolve — serve from this API instead
   if (book.id) {
+    // If file_url is missing or legacy Supabase URL, point to Render API
     if (!file_url || /supabase\.co/i.test(file_url)) {
       file_url = `${baseUrl}/api/books/${book.id}/file`;
     }
+    // If cover is a legacy Supabase URL, route through Render API cover endpoint
     if (cover && /supabase\.co/i.test(cover)) {
       cover = `${baseUrl}/api/books/${book.id}/cover`;
     }
+    // If cover is a Render API URL (not R2), keep it — the cover route will redirect to R2
+    // If cover is already R2, keep it as-is for direct browser access
   }
 
   return { ...book, cover, file_url };
@@ -465,17 +468,25 @@ router.get('/:id/cover', async (req, res) => {
       return res.sendFile(path.resolve(path.join(COVERS_DIR, match)));
     }
 
-    // 2. Fallback: try R2 public URL
+    // 2. Fallback: redirect directly to R2 (no HEAD probe — just redirect and let browser handle 404)
     const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
     if (r2PublicBase) {
-      // Try common cover extensions on R2
-      for (const ext of ['.png', '.jpg']) {
-        const r2Url = `${r2PublicBase}/covers/${id}${ext}`;
-        try {
-          const probe = await fetch(r2Url, { method: 'HEAD' });
-          if (probe.ok) return res.redirect(r2Url);
-        } catch { }
-      }
+      // Try DB first to get the exact cover URL stored after background upload
+      try {
+        const { rows } = await query('SELECT cover, cover_data FROM books WHERE id = $1', [id]);
+        if (rows.length > 0) {
+          const row = rows[0];
+          // If DB already stores an R2 URL, redirect to it directly
+          if (row.cover && /r2\.dev|r2\.cloudflarestorage\.com/i.test(row.cover)) {
+            return res.redirect(row.cover);
+          }
+          // Fallback: redirect to known R2 pattern (covers uploaded as .png by default for PDFs, .jpg for EPUBs)
+          // Try .png first (most common since PDF covers are rendered as PNG)
+          return res.redirect(`${r2PublicBase}/covers/${id}.png`);
+        }
+      } catch { }
+      // No DB row — still try R2 directly
+      return res.redirect(`${r2PublicBase}/covers/${id}.png`);
     }
 
     // 3. Check DB cover URL for R2 redirect
