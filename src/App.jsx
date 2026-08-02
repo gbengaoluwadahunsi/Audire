@@ -2,7 +2,28 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import LandingPage from './components/LandingPage';
 import ErrorBoundary from './components/ErrorBoundary';
 
-const Dashboard = lazy(() => import('./components/Dashboard'));
+const safeLazyImport = (importFn) =>
+  lazy(async () => {
+    try {
+      const component = await importFn();
+      sessionStorage.removeItem('chunk_reload_attempted');
+      return component;
+    } catch (error) {
+      const isChunkError =
+        error?.name === 'ChunkLoadError' ||
+        /Failed to fetch dynamically imported module|Importing a module script failed/i.test(
+          error?.message || ''
+        );
+      if (isChunkError && !sessionStorage.getItem('chunk_reload_attempted')) {
+        sessionStorage.setItem('chunk_reload_attempted', 'true');
+        window.location.reload();
+        return new Promise(() => {});
+      }
+      throw error;
+    }
+  });
+
+const Dashboard = safeLazyImport(() => import('./components/Dashboard'));
 import { getSettings } from './lib/settings';
 import './App.css';
 
