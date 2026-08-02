@@ -201,11 +201,9 @@ router.get('/:id', async (req, res) => {
     const baseUrl = getBaseUrl(req);
     const { rows } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Book not found' });
-    let book = rows[0];
-    if (book.cover && !(await coverFileExists(book.id))) {
-      await query('UPDATE books SET cover = NULL WHERE id = $1', [book.id]);
-      book = { ...book, cover: null };
-    }
+    const book = rows[0];
+    // NOTE: Do NOT null-out cover here — covers may be in R2 (not local disk)
+    // normalizeBookUrls will route covers through Render cover endpoint if needed
     res.json(normalizeBookUrls(book, baseUrl));
   } catch (err) {
     console.error('Get book error:', err);
@@ -411,7 +409,7 @@ router.get('/:id/file', async (req, res) => {
     return res.sendFile(epubPath, { headers: { 'Content-Type': 'application/epub+zip' } });
   } catch { }
 
-  // Fallback: Check if file_url in DB points to R2 — proxy through Render (avoids CORS)
+  // Fallback: Check if file_url in DB points to R2 — stream-proxy through Render (avoids CORS)
   try {
     const { rows } = await query('SELECT format, file_url, file_data FROM books WHERE id = $1', [id]);
     if (rows.length > 0) {
@@ -429,19 +427,23 @@ router.get('/:id/file', async (req, res) => {
       }
 
       if (r2Url) {
-        // Proxy the R2 file through Render — avoids CORS entirely
-        const r2Res = await fetch(r2Url);
-        if (r2Res.ok) {
-          const fmt = row.format || 'pdf';
-          const contentType = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
-          res.setHeader('Content-Type', contentType);
-          res.setHeader('Cache-Control', 'public, max-age=86400');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          // Stream the response body to client
-          const { Readable } = await import('stream');
-          Readable.fromWeb(r2Res.body).pipe(res);
-          return;
-        }
+        // Stream-proxy via https.get — zero memory buffering, true piping
+        const fmt = row.format || 'pdf';
+        const contentType = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+        const https = await import('https');
+        return https.default.get(r2Url, (r2Res) => {
+          if (r2Res.statusCode === 200) {
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            if (r2Res.headers['content-length']) {
+              res.setHeader('Content-Length', r2Res.headers['content-length']);
+            }
+            r2Res.pipe(res);
+          } else {
+            res.status(404).send('File not found in R2');
+          }
+        }).on('error', () => res.status(502).send('R2 fetch error'));
       }
 
       // Last resort: bytea from DB
