@@ -249,6 +249,11 @@ function extractXml(xml, tag) {
 export async function extractCover(filePath, id, format, coversDir) {
   if (format === 'pdf') {
     try {
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (stat && stat.size > 3 * 1024 * 1024) {
+        console.log(`Skipping PDF cover extraction for repair on >3MB file (${(stat.size/1024/1024).toFixed(1)}MB)`);
+        return null;
+      }
       const doc = await pdf(filePath, { scale: 1 });
       const firstPage = await doc.getPage(1);
       if (firstPage) {
@@ -258,6 +263,8 @@ export async function extractCover(filePath, id, format, coversDir) {
       }
     } catch (err) {
       console.warn('PDF cover extraction failed:', err?.message || err);
+    } finally {
+      if (global.gc) global.gc();
     }
     return null;
   }
