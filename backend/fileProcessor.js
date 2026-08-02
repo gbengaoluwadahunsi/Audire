@@ -195,30 +195,41 @@ async function processEpubCustom(filePath, id, coversDir) {
 async function processPdf(filePath, id, coversDir) {
   let title = path.basename(filePath, '.pdf');
   let author = null;
-  try {
-    let buf = await fs.readFile(filePath);
-    let pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false });
-    title = pdfDoc.getTitle() || title;
-    author = pdfDoc.getAuthor() || null;
-    buf = null;
-    pdfDoc = null;
-    if (global.gc) global.gc();
-  } catch (err) {
-    console.warn('PDF metadata extraction failed, using filename:', err?.message);
-  }
-
   let coverPath = null;
+
   try {
-    const doc = await pdf(filePath, { scale: 1 });
-    const firstPage = await doc.getPage(1);
-    if (firstPage) {
-      const coverFileName = `${id}.png`;
-      coverPath = path.join(coversDir, coverFileName);
-      await fs.writeFile(coverPath, firstPage);
+    const stat = await fs.stat(filePath);
+    // If PDF is larger than 8MB, skip PDF parsing & rendering to prevent RAM OOM (512MB limit)
+    if (stat.size <= 8 * 1024 * 1024) {
+      try {
+        let buf = await fs.readFile(filePath);
+        let pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false });
+        title = pdfDoc.getTitle() || title;
+        author = pdfDoc.getAuthor() || null;
+        buf = null;
+        pdfDoc = null;
+      } catch (err) {
+        console.warn('PDF metadata extraction skipped/failed:', err?.message);
+      }
+
+      try {
+        const doc = await pdf(filePath, { scale: 1 });
+        const firstPage = await doc.getPage(1);
+        if (firstPage) {
+          const coverFileName = `${id}.png`;
+          coverPath = path.join(coversDir, coverFileName);
+          await fs.writeFile(coverPath, firstPage);
+        }
+      } catch (err) {
+        console.warn('PDF cover extraction skipped/failed:', err?.message || err);
+      }
+    } else {
+      console.log(`PDF file size (${(stat.size / 1024 / 1024).toFixed(1)}MB) > 8MB. Skipping image rendering to prevent server OOM.`);
     }
-    if (global.gc) global.gc();
   } catch (err) {
-    console.warn('PDF cover extraction failed:', err?.message || err);
+    console.warn('PDF processing error:', err.message);
+  } finally {
+    if (global.gc) global.gc();
   }
 
   return {

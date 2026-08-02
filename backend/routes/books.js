@@ -334,6 +334,15 @@ router.post('/', upload.single('file'), async (req, res) => {
       author: bookData.author || null,
     });
 
+    // Clean up temporary local files after uploading to R2 to save disk & RAM space on Render
+    if (isR2Configured()) {
+      try {
+        if (coverPath) await fs.unlink(coverPath).catch(() => {});
+        // Also remove local pdf/epub copy if saved in BOOKS_DIR/uploads to keep disk light
+        if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+      } catch { }
+    }
+
     if (dbBook) {
       res.status(201).json(normalizeBookUrls(dbBook, baseUrl));
     } else {
@@ -419,7 +428,7 @@ router.get('/:id/file', async (req, res) => {
       if (row.file_url && /r2\.dev|r2\.cloudflarestorage\.com/i.test(row.file_url)) {
         r2Url = row.file_url;
       } else {
-        const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
+        const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || 'https://pub-71d570ca196945939ec117bf558c4c0d.r2.dev').replace(/\/$/, '');
         if (r2PublicBase) {
           const fmt = row.format || 'pdf';
           r2Url = `${r2PublicBase}/books/${id}.${fmt}`;
@@ -487,7 +496,7 @@ router.get('/:id/cover', async (req, res) => {
     }
 
     // 2. Fallback: redirect directly to R2 (no HEAD probe — just redirect and let browser handle 404)
-    const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
+    const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || 'https://pub-71d570ca196945939ec117bf558c4c0d.r2.dev').replace(/\/$/, '');
     if (r2PublicBase) {
       // Try DB first to get the exact cover URL stored after background upload
       try {
