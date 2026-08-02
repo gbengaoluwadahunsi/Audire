@@ -407,27 +407,45 @@ router.get('/:id/file', async (req, res) => {
     return res.sendFile(epubPath, { headers: { 'Content-Type': 'application/epub+zip' } });
   } catch { }
 
-  // Fallback: Check if file_url in DB points to R2 and redirect
+  // Fallback: Check if file_url in DB points to R2 — proxy through Render (avoids CORS)
   try {
     const { rows } = await query('SELECT format, file_url, file_data FROM books WHERE id = $1', [id]);
     if (rows.length > 0) {
       const row = rows[0];
-      // If file_url is an R2 public URL, redirect to it
+      let r2Url = null;
+
       if (row.file_url && /r2\.dev|r2\.cloudflarestorage\.com/i.test(row.file_url)) {
-        return res.redirect(row.file_url);
+        r2Url = row.file_url;
+      } else {
+        const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
+        if (r2PublicBase) {
+          const fmt = row.format || 'pdf';
+          r2Url = `${r2PublicBase}/books/${id}.${fmt}`;
+        }
       }
-      // If we have R2 configured, try the R2 public URL directly
-      const r2PublicBase = (process.env.CLOUDFLARE_R2_PUBLIC_URL || '').replace(/\/$/, '');
-      if (r2PublicBase) {
-        const fmt = row.format || 'pdf';
-        const r2Url = `${r2PublicBase}/books/${id}.${fmt}`;
-        return res.redirect(r2Url);
+
+      if (r2Url) {
+        // Proxy the R2 file through Render — avoids CORS entirely
+        const r2Res = await fetch(r2Url);
+        if (r2Res.ok) {
+          const fmt = row.format || 'pdf';
+          const contentType = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          // Stream the response body to client
+          const { Readable } = await import('stream');
+          Readable.fromWeb(r2Res.body).pipe(res);
+          return;
+        }
       }
+
       // Last resort: bytea from DB
       if (row.file_data) {
         const ext = row.format === 'pdf' ? '.pdf' : '.epub';
         const contentType = ext === '.pdf' ? 'application/pdf' : 'application/epub+zip';
         res.setHeader('Content-Type', contentType);
+        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.send(row.file_data);
       }
     }
