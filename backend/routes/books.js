@@ -93,16 +93,20 @@ function normalizeBookUrls(book, baseUrl) {
   let file_url = rewriteLegacyLocalhostUrl(book.file_url, baseUrl);
 
   if (book.id) {
-    // If file_url is missing or legacy Supabase URL, point to Render API
-    if (!file_url || /supabase\.co/i.test(file_url)) {
-      file_url = `${baseUrl}/api/books/${book.id}/file`;
-    }
-    // If cover is a legacy Supabase URL, route through Render API cover endpoint
+    // ALWAYS serve files through Render API proxy — never expose R2 URLs directly
+    // to frontend. PDF.js uses fetch() which is CORS-blocked on R2 public URLs.
+    // The Render /:id/file route proxies from R2 server-side (no CORS issue).
+    file_url = `${baseUrl}/api/books/${book.id}/file`;
+
+    // Covers can use R2 directly — <img> tags are not CORS-restricted
+    // But rewrite legacy Supabase URLs to go through Render cover endpoint
     if (cover && /supabase\.co/i.test(cover)) {
       cover = `${baseUrl}/api/books/${book.id}/cover`;
     }
-    // If cover is a Render API URL (not R2), keep it — the cover route will redirect to R2
-    // If cover is already R2, keep it as-is for direct browser access
+    // If cover is missing entirely, use Render cover endpoint (will redirect to R2 or serve placeholder)
+    if (!cover) {
+      cover = `${baseUrl}/api/books/${book.id}/cover`;
+    }
   }
 
   return { ...book, cover, file_url };
