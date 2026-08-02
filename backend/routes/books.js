@@ -436,11 +436,13 @@ router.get('/:id/file', async (req, res) => {
       }
 
       if (r2Url) {
-        // Stream-proxy via https.get — zero memory buffering, true piping
+        // Stream-proxy via https — zero memory buffering
         const fmt = row.format || 'pdf';
         const contentType = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
         const https = await import('https');
-        return https.default.get(r2Url, (r2Res) => {
+        const reqMethod = req.method === 'HEAD' ? 'HEAD' : 'GET';
+        
+        const r2Req = https.default.request(r2Url, { method: reqMethod }, (r2Res) => {
           if (r2Res.statusCode === 200) {
             res.setHeader('Content-Type', contentType);
             res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -448,11 +450,17 @@ router.get('/:id/file', async (req, res) => {
             if (r2Res.headers['content-length']) {
               res.setHeader('Content-Length', r2Res.headers['content-length']);
             }
+            if (req.method === 'HEAD') {
+              return res.status(200).end();
+            }
             r2Res.pipe(res);
           } else {
             res.status(404).send('File not found in R2');
           }
-        }).on('error', () => res.status(502).send('R2 fetch error'));
+        });
+        r2Req.on('error', () => res.status(502).send('R2 fetch error'));
+        r2Req.end();
+        return;
       }
 
       // Last resort: bytea from DB
