@@ -196,11 +196,13 @@ async function processPdf(filePath, id, coversDir) {
   let title = path.basename(filePath, '.pdf');
   let author = null;
   try {
-    const buf = await fs.readFile(filePath);
-    const pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true });
+    let buf = await fs.readFile(filePath);
+    let pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false });
     title = pdfDoc.getTitle() || title;
     author = pdfDoc.getAuthor() || null;
-    // Let GC reclaim the buffer and parsed doc
+    buf = null;
+    pdfDoc = null;
+    if (global.gc) global.gc();
   } catch (err) {
     console.warn('PDF metadata extraction failed, using filename:', err?.message);
   }
@@ -214,6 +216,7 @@ async function processPdf(filePath, id, coversDir) {
       coverPath = path.join(coversDir, coverFileName);
       await fs.writeFile(coverPath, firstPage);
     }
+    if (global.gc) global.gc();
   } catch (err) {
     console.warn('PDF cover extraction failed:', err?.message || err);
   }

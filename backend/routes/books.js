@@ -329,6 +329,8 @@ router.post('/', upload.single('file'), async (req, res) => {
           }
         } catch (r2Err) {
           console.warn('Background R2 upload error:', r2Err.message);
+        } finally {
+          if (global.gc) global.gc();
         }
       });
     }
