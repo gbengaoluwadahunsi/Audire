@@ -3,9 +3,8 @@ import { createPortal } from 'react-dom';
 import { Book, Library, Settings, Plus, Play, Upload, FileText, Search, Trash2, FolderPlus, Folder, ChevronRight, CornerDownRight, Sun, Moon, X, ArrowLeft, Edit, TrendingUp, BookOpen, LayoutGrid, Link as LinkIcon } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import { AnimatePresence, motion } from 'framer-motion';
-import { processFile } from '../lib/fileProcessor';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
-import { fetchBooks, uploadBook, deleteBook, repairBookCover, importArticleFromUrl } from '../lib/api';
+import { fetchBooks, uploadBook, uploadBookCover, deleteBook, importArticleFromUrl } from '../lib/api';
 import { buildArticleEpub } from '../lib/articleEpub';
 import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
 
@@ -51,7 +50,7 @@ import MiniPlayer from './MiniPlayer';
 import MetadataEditor from './MetadataEditor';
 import StatsDashboard from './StatsDashboard';
 import { ToastContainer } from './Toast';
-import VirtualizedBookGrid from './VirtualizedBookGrid';
+import BookGrid from './BookGrid';
 import SplitView from './SplitView';
 import DragDropCollection from './DragDropCollection';
 import ExportModal from './ExportModal';
@@ -104,39 +103,12 @@ function Dashboard({ onBackToLanding }) {
   const [editingBook, setEditingBook] = useState(null);
   const [selectedBookIds, setSelectedBookIds] = useState(new Set());
   const [formatFilter, setFormatFilter] = useState('all');
-  const [bulkAction, setBulkAction] = useState(null);
   const [showCollectionDeleteConfirm, setShowCollectionDeleteConfirm] = useState(null);
   const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
   const [exportBook, setExportBook] = useState(null);
   const [splitPickerSearch, setSplitPickerSearch] = useState('');
   const fileInputRef = useRef(null);
   const [coverErrorIds, setCoverErrorIds] = useState(() => new Set());
-  const coverRepairAttempted = useRef(new Set());
-  const coverRepairQueueRef = useRef(Promise.resolve());
-
-  const enqueueCoverRepair = (book, { refreshList = false } = {}) => {
-    if (!book?.id || !book.file_url || coverRepairAttempted.current.has(book.id)) return;
-
-    coverRepairAttempted.current.add(book.id);
-    coverRepairQueueRef.current = coverRepairQueueRef.current
-      .then(async () => {
-        const newCoverUrl = await repairBookCover(book);
-        if (newCoverUrl) {
-          setCoverErrorIds(prev => {
-            const next = new Set(prev);
-            next.delete(book.id);
-            return next;
-          });
-          setBooks(prev => prev.map(b => b.id === book.id ? { ...b, cover: newCoverUrl } : b));
-          if (refreshList) {
-            const latest = await fetchBooks();
-            setBooks(latest);
-          }
-        }
-        await new Promise((r) => setTimeout(r, 200));
-      })
-      .catch(() => { });
-  };
 
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -173,12 +145,6 @@ function Dashboard({ onBackToLanding }) {
     try {
       const allBooks = await fetchBooks();
       setBooks(allBooks);
-
-      // Auto-repair missing covers in the background (backend already filters invalid covers)
-      const booksNeedingCovers = allBooks
-        .filter(b => !b.cover && b.file_url && !coverRepairAttempted.current.has(b.id))
-        .slice(0, 12);
-      for (const book of booksNeedingCovers) enqueueCoverRepair(book);
     } catch (err) {
       console.error('Failed to load books:', err);
       addToast('Could not connect to your library', 'error');
@@ -275,7 +241,6 @@ function Dashboard({ onBackToLanding }) {
     setCollections(await getCollections());
     addToast(`${ids.length} book${ids.length > 1 ? 's' : ''} added to collection`, 'success');
     setSelectedBookIds(new Set());
-    setBulkAction(null);
   };
 
   const handleReorderInCollection = async (collectionId, bookIds) => {
@@ -320,6 +285,26 @@ function Dashboard({ onBackToLanding }) {
     }
   };
 
+  /**
+   * Covers are rendered here in the browser rather than on the server: rasterising
+   * a PDF page server-side is what used to exhaust the 512MB instance. The backend
+   * still pulls covers straight out of EPUB zips (cheap), so this only has to fill
+   * the gap — mainly PDFs. Never let a cover failure fail the upload.
+   */
+  const attachCoverFromBrowser = async (uploaded, file) => {
+    if (!uploaded?.id || uploaded.cover) return;
+    try {
+      // Loaded on demand — fileProcessor pulls in pdf.js and jszip.
+      const { processFile } = await import('../lib/fileProcessor');
+      const { coverBlob } = await processFile(file);
+      if (!coverBlob) return;
+      const ext = coverBlob.type === 'image/png' ? 'png' : 'jpg';
+      await uploadBookCover(uploaded.id, new File([coverBlob], `cover.${ext}`, { type: coverBlob.type || 'image/jpeg' }));
+    } catch (err) {
+      console.warn(`Could not build a cover for ${file.name}:`, err?.message || err);
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
@@ -360,6 +345,7 @@ function Dashboard({ onBackToLanding }) {
           }
 
           const uploaded = await uploadBook(uploadBlob, file.name);
+          await attachCoverFromBrowser(uploaded, file);
           successCount++;
           completed++;
           addToast(`[${completed}/${total}] "${uploaded.title || file.name}" added`, 'success');
@@ -952,7 +938,7 @@ function Dashboard({ onBackToLanding }) {
                         </div>
                       </div>
                     )}
-                    <VirtualizedBookGrid
+                    <BookGrid
                       books={filteredBooks}
                       selectedBookIds={selectedBookIds}
                       onToggleSelect={toggleBookSelect}
@@ -965,9 +951,7 @@ function Dashboard({ onBackToLanding }) {
                       onCoverError={(book) => {
                         setCoverErrorIds(prev => new Set([...prev, book.id]));
                         setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                        enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
                       }}
-                      onCoverRepair={enqueueCoverRepair}
                       getProgressPercent={getProgressPercent}
                     />
                   </>
@@ -1141,7 +1125,6 @@ function Dashboard({ onBackToLanding }) {
                       onCoverError={(book) => {
                         setCoverErrorIds(prev => new Set([...prev, book.id]));
                         setBooks((prev) => prev.map((b) => (b.id === book.id ? { ...b, cover: null } : b)));
-                        enqueueCoverRepair({ ...book, cover: null }, { refreshList: true });
                       }}
                       searchQuery={collectionSearchQuery}
                       getProgressPercent={getProgressPercent}

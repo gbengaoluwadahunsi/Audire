@@ -1,12 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { query } from './db.js';
+import { query } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function ensureSchema() {
-  const sqlPath = path.join(__dirname, 'neon-schema.sql');
+  const sqlPath = path.join(__dirname, '..', 'neon-schema.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
   await query(sql);
 }

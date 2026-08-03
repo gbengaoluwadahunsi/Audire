@@ -30,7 +30,6 @@ export function AIProvider({ children }) {
   const define = useCallback(wrap('aiDefine'), [wrap]);
   const summarize = useCallback(wrap('aiSummarize'), [wrap]);
   const generateFlashcards = useCallback(wrap('aiFlashcards'), [wrap]);
-  const visualizeScene = useCallback(wrap('aiVisualize'), [wrap]);
   const ask = useCallback(wrap('aiAsk'), [wrap]);
   const catchup = useCallback(wrap('aiCatchup'), [wrap]);
 
@@ -44,7 +43,6 @@ export function AIProvider({ children }) {
       define,
       summarize,
       generateFlashcards,
-      visualizeScene,
       ask,
       catchup,
       init: () => Promise.resolve(!!API_URL),

@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { processUpload } from '../fileProcessor.js';
-import { convertEpubToPdf } from '../epubToPdf.js';
 import { isR2Configured, uploadToR2 } from '../r2Storage.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -110,30 +109,6 @@ function normalizeBookUrls(book, baseUrl) {
   }
 
   return { ...book, cover, file_url };
-}
-
-const REPAIR_RATE_WINDOW_MS = 30_000;
-const REPAIR_RATE_MAX = 8;
-const repairRateByIp = new Map();
-let repairQueue = Promise.resolve();
-
-function isRepairRateLimited(ip) {
-  const now = Date.now();
-  const recent = (repairRateByIp.get(ip) || []).filter((ts) => now - ts < REPAIR_RATE_WINDOW_MS);
-  if (recent.length >= REPAIR_RATE_MAX) {
-    repairRateByIp.set(ip, recent);
-    return true;
-  }
-  recent.push(now);
-  repairRateByIp.set(ip, recent);
-  return false;
-}
-
-function enqueueRepairJob(job) {
-  const run = repairQueue.then(() => job());
-  // Keep queue alive even if one job fails.
-  repairQueue = run.catch(() => { });
-  return run;
 }
 
 async function coverFileExists(bookId) {
@@ -363,44 +338,6 @@ router.post('/', upload.single('file'), async (req, res) => {
   }
 });
 
-/** Convert EPUB to PDF and serve. Caches result as {id}_converted.pdf */
-router.get('/:id/pdf', async (req, res) => {
-  try {
-    const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).send('Book not found');
-    const book = rows[0];
-    if (book.format !== 'epub') {
-      return res.status(400).json({ error: 'Only EPUB books can be converted to PDF' });
-    }
-
-    const epubPath = path.join(BOOKS_DIR, `${book.id}.epub`);
-    const pdfPath = path.join(BOOKS_DIR, `${book.id}_converted.pdf`);
-
-    try {
-      await fs.access(epubPath);
-    } catch {
-      return res.status(404).send('EPUB file not found');
-    }
-
-    try {
-      await fs.access(pdfPath);
-    } catch {
-      try {
-        await convertEpubToPdf(epubPath, pdfPath);
-      } catch (err) {
-        console.error('EPUB to PDF conversion error:', err);
-        return res.status(500).json({ error: err.message || 'Conversion failed' });
-      }
-    }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.sendFile(path.resolve(pdfPath));
-  } catch (err) {
-    console.error('Get PDF error:', err);
-    res.status(500).send('Error');
-  }
-});
-
 router.get('/:id/file', async (req, res) => {
   const { id } = req.params;
   
@@ -542,74 +479,6 @@ router.get('/:id/cover', async (req, res) => {
   } catch (err) {
     console.error('Get cover error:', err);
     res.status(500).send('Error');
-  }
-});
-
-router.post('/:id/repair-cover', async (req, res) => {
-  const ip = String((req.get('x-forwarded-for') || req.ip || 'unknown')).split(',')[0].trim();
-  if (isRepairRateLimited(ip)) {
-    return res.status(429).json({ error: 'Too many cover repair requests. Please wait and try again.' });
-  }
-
-  try {
-    await enqueueRepairJob(async () => {
-      let bookFormat = 'pdf';
-      let fileExists = false;
-
-      // 1. Try DB lookup first
-      try {
-        const { rows } = await query('SELECT id, format FROM books WHERE id = $1', [req.params.id]);
-        if (rows.length > 0) {
-          bookFormat = rows[0].format || 'pdf';
-        }
-      } catch { }
-
-      // 2. Check local disk files
-      const pdfPath = path.join(BOOKS_DIR, `${req.params.id}.pdf`);
-      const epubPath = path.join(BOOKS_DIR, `${req.params.id}.epub`);
-
-      let filePath = pdfPath;
-      try {
-        await fs.access(pdfPath);
-        fileExists = true;
-        bookFormat = 'pdf';
-      } catch {
-        try {
-          await fs.access(epubPath);
-          fileExists = true;
-          filePath = epubPath;
-          bookFormat = 'epub';
-        } catch { }
-      }
-
-      if (!fileExists) {
-        res.status(404).json({ error: 'File not found' });
-        return;
-      }
-
-      const { extractCover } = await import('../fileProcessor.js');
-      const coverPath = await extractCover(filePath, req.params.id, bookFormat, COVERS_DIR);
-
-      // If cover could be extracted, update the database.
-      const baseUrl = getBaseUrl(req);
-      if (coverPath) {
-        try {
-          const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
-          await query('UPDATE books SET cover = $2 WHERE id = $1', [req.params.id, coverUrl]);
-        } catch { }
-      }
-
-      try {
-        const { rows: updated } = await query(`SELECT ${BOOK_COLS} FROM books WHERE id = $1`, [req.params.id]);
-        if (updated.length) return res.json(normalizeBookUrls(updated[0], baseUrl));
-      } catch { }
-
-      // Fallback response if DB is offline
-      res.json({ id: req.params.id, cover: coverPath ? `${baseUrl}/api/books/${req.params.id}/cover` : null });
-    });
-  } catch (err) {
-    console.error('Repair cover error:', err);
-    res.status(500).json({ error: err.message });
   }
 });
 

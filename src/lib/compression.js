@@ -1,5 +1,7 @@
-import { PDFDocument } from 'pdf-lib';
-import JSZip from 'jszip';
+/**
+ * pdf-lib and jszip are only pulled in when a file actually exceeds the limit —
+ * they are ~620kB together and most uploads never reach the compression path.
+ */
 
 const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -37,6 +39,7 @@ export async function compressIfNeeded(file) {
 }
 
 async function compressEpub(file) {
+    const { default: JSZip } = await import('jszip');
     const arrayBuffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
     const newZip = new JSZip();
@@ -60,6 +63,7 @@ async function compressEpub(file) {
 }
 
 async function compressPdf(file) {
+    const { PDFDocument } = await import('pdf-lib');
     const arrayBuffer = await file.arrayBuffer();
     const pdfDoc = await PDFDocument.load(arrayBuffer);
     const pdfBytes = await pdfDoc.save({ useObjectStreams: true });

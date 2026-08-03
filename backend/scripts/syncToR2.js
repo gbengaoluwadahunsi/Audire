@@ -2,10 +2,10 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { isR2Configured, uploadToR2 } from './r2Storage.js';
+import { isR2Configured, uploadToR2 } from '../r2Storage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOAD_BASE = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+const UPLOAD_BASE = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const BOOKS_DIR = path.join(UPLOAD_BASE, 'books');
 const COVERS_DIR = path.join(UPLOAD_BASE, 'covers');
 

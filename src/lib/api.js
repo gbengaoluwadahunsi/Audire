@@ -106,32 +106,8 @@ export async function downloadBookFile(fileUrl) {
   return res.arrayBuffer();
 }
 
-/** URL for EPUB-converted-to-PDF (used when displaying EPUB as PDF) */
-export function getEpubPdfUrl(bookId) {
-  return url(`/api/books/${bookId}/pdf`);
-}
-
 export async function deleteBook(bookId) {
   return fetchJson(`/api/books/${bookId}`, { method: 'DELETE' });
-}
-
-export async function repairBookCover(book) {
-  if (!book?.id || book.cover || !book.file_url) return null;
-  try {
-    // Skip if the book file doesn't exist (avoids 404 on repair-cover)
-    const fileUrl = normalizeBackendUrl(book.file_url)?.startsWith('http')
-      ? normalizeBackendUrl(book.file_url)
-      : url(`/api/books/${book.id}/file`);
-    const headRes = await fetch(fileUrl, { method: 'HEAD' });
-    if (!headRes.ok) return null;
-
-    const res = await fetch(url(`/api/books/${book.id}/repair-cover`), { method: 'POST' });
-    if (!res.ok) return null;
-    const updated = await res.json();
-    return normalizeBackendUrl(updated?.cover || null);
-  } catch {
-    return null;
-  }
 }
 
 const API_BASE = (import.meta.env.VITE_API_URL || '').trim();
@@ -167,11 +143,6 @@ export async function aiSummarize(text) {
 export async function aiFlashcards(text) {
   const { cards } = await aiFetch('/api/ai/flashcards', { text });
   return Array.isArray(cards) ? cards : [];
-}
-
-export async function aiVisualize(text) {
-  const { content } = await aiFetch('/api/ai/visualize', { text });
-  return content ?? '';
 }
 
 export async function aiAsk(question, context = '') {

@@ -2,7 +2,6 @@ import path from 'path';
 import fs from 'fs/promises';
 import JSZip from 'jszip';
 import { PDFDocument } from 'pdf-lib';
-import { pdf } from 'pdf-to-img';
 import { EPub } from 'epub2';
 
 /**
@@ -197,9 +196,11 @@ async function processPdf(filePath, id, coversDir) {
   let author = null;
   let coverPath = null;
 
+  // PDF covers are rendered in the browser at upload time and POSTed to /:id/cover.
+  // Rasterising pages here is what used to OOM the 512MB instance, so we only read
+  // metadata — and only for files small enough to hold in memory safely.
   try {
     const stat = await fs.stat(filePath);
-    // If PDF is larger than 8MB, skip PDF parsing & rendering to prevent RAM OOM (512MB limit)
     if (stat.size <= 8 * 1024 * 1024) {
       try {
         let buf = await fs.readFile(filePath);
@@ -211,20 +212,8 @@ async function processPdf(filePath, id, coversDir) {
       } catch (err) {
         console.warn('PDF metadata extraction skipped/failed:', err?.message);
       }
-
-      try {
-        const doc = await pdf(filePath, { scale: 1 });
-        const firstPage = await doc.getPage(1);
-        if (firstPage) {
-          const coverFileName = `${id}.png`;
-          coverPath = path.join(coversDir, coverFileName);
-          await fs.writeFile(coverPath, firstPage);
-        }
-      } catch (err) {
-        console.warn('PDF cover extraction skipped/failed:', err?.message || err);
-      }
     } else {
-      console.log(`PDF file size (${(stat.size / 1024 / 1024).toFixed(1)}MB) > 8MB. Skipping image rendering to prevent server OOM.`);
+      console.log(`PDF file size (${(stat.size / 1024 / 1024).toFixed(1)}MB) > 8MB. Skipping metadata read to protect server RAM.`);
     }
   } catch (err) {
     console.warn('PDF processing error:', err.message);
@@ -241,36 +230,4 @@ async function processPdf(filePath, id, coversDir) {
 function extractXml(xml, tag) {
   const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]+)`, 'i'));
   return m ? m[1].trim() : null;
-}
-
-/**
- * Extract cover for an existing book file. Used by repair-cover endpoint.
- */
-export async function extractCover(filePath, id, format, coversDir) {
-  if (format === 'pdf') {
-    try {
-      const stat = await fs.stat(filePath).catch(() => null);
-      if (stat && stat.size > 3 * 1024 * 1024) {
-        console.log(`Skipping PDF cover extraction for repair on >3MB file (${(stat.size/1024/1024).toFixed(1)}MB)`);
-        return null;
-      }
-      const doc = await pdf(filePath, { scale: 1 });
-      const firstPage = await doc.getPage(1);
-      if (firstPage) {
-        const coverPath = path.join(coversDir, `${id}.png`);
-        await fs.writeFile(coverPath, firstPage);
-        return coverPath;
-      }
-    } catch (err) {
-      console.warn('PDF cover extraction failed:', err?.message || err);
-    } finally {
-      if (global.gc) global.gc();
-    }
-    return null;
-  }
-  if (format === 'epub') {
-    const result = await processEpub(filePath, id, coversDir);
-    return result.coverPath;
-  }
-  return null;
 }

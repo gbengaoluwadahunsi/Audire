@@ -1,7 +1,7 @@
 import React from 'react';
 import { FileText, Trash2, FolderPlus, Edit } from 'lucide-react';
 
-function VirtualizedBookGrid({
+function BookGrid({
   books,
   selectedBookIds,
   onToggleSelect,
@@ -104,4 +104,4 @@ function VirtualizedBookGrid({
   );
 }
 
-export default React.memo(VirtualizedBookGrid);
+export default React.memo(BookGrid);

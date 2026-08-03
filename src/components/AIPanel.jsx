@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, X, Loader2, BookOpen, BookMarked, FileText, Image as ImageIcon, Send, History } from 'lucide-react';
+import { Sparkles, X, Loader2, BookOpen, BookMarked, FileText, Send, History } from 'lucide-react';
 import { useAI } from '../context/AIContext';
 
 const ACTIONS = [
@@ -7,13 +7,11 @@ const ACTIONS = [
   { id: 'define', label: 'Define', icon: BookMarked },
   { id: 'summarize', label: 'Summarize', icon: FileText },
   { id: 'catchup', label: 'Catch me up', icon: History },
-  { id: 'visualize', label: 'Visualize', icon: ImageIcon },
 ];
 
 export default function AIPanel({ text, context, isFullPage, onClose }) {
-  const { explain, define, summarize, visualizeScene, ask, catchup, isLoading, error, isReady } = useAI();
+  const { explain, define, summarize, ask, catchup, isLoading, error, isReady } = useAI();
   const [result, setResult] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
   const [activeAction, setActiveAction] = useState(null);
   const [question, setQuestion] = useState('');
 
@@ -23,7 +21,6 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
     if (!q || activeAction) return;
     setActiveAction('ask');
     setResult('');
-    setImageUrl('');
     try {
       // Prefer the selected/page text as grounding; fall back to surrounding context.
       const grounding = (text || '').trim() || (context || '').trim();
@@ -45,7 +42,6 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
 
     setActiveAction(actionId);
     setResult('');
-    setImageUrl('');
 
     try {
       let res = '';
@@ -53,15 +49,6 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
       else if (actionId === 'define') res = await define(t, context);
       else if (actionId === 'summarize') res = await summarize(t);
       else if (actionId === 'catchup') res = await catchup(`${context || ''}\n${t}`.trim());
-      else if (actionId === 'visualize') {
-        const out = await visualizeScene(t);
-        if (typeof out === 'string' && (out.startsWith('http') || out.startsWith('data:'))) {
-          setImageUrl(out);
-        } else {
-          setResult(out || 'No visualization.');
-        }
-        return;
-      }
       setResult(res || 'No response.');
     } catch (err) {
       setResult(err.message || 'Something went wrong.');
@@ -93,7 +80,7 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
         <>
           {!isReady && (
             <p className="ai-panel-selection-empty" style={{ marginBottom: 12 }}>
-              AI features (Explain, Define, Summarize, Visualize) are not configured. Add your own AI provider to enable them.
+              AI features (Explain, Define, Summarize) are not configured. Add your own AI provider to enable them.
             </p>
           )}
           <div className="ai-panel-selection">
@@ -152,16 +139,6 @@ export default function AIPanel({ text, context, isFullPage, onClose }) {
 
         {error && !isLoading && (
           <p className="ai-panel-error">{error}</p>
-        )}
-
-        {imageUrl && (
-          <div className="ai-panel-result image">
-            <h4>Visualization</h4>
-            <div className="ai-scene-image">
-              <img src={imageUrl} alt="AI Generated Scene" />
-              <button className="download-img-btn" onClick={() => window.open(imageUrl, '_blank')}>View Fullscreen</button>
-            </div>
-          </div>
         )}
 
         {result && (

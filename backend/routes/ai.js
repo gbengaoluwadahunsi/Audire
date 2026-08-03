@@ -155,20 +155,4 @@ router.post('/ask', async (req, res) => {
   }
 });
 
-router.post('/visualize', async (req, res) => {
-  try {
-    const { text } = req.body || {};
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'text required' });
-    }
-    const system = 'You are a creative assistant. Describe a vivid visual scene or image that could illustrate this passage. Be concise (2-4 sentences). Focus on imagery, mood, and key visual elements.';
-    const user = `Describe a visual scene for: "${String(text).slice(0, 1500)}"`;
-    const content = await groqChat([{ role: 'system', content: system }, { role: 'user', content: user }], { max_tokens: 256 });
-    res.json({ content });
-  } catch (e) {
-    console.error('AI visualize error:', e);
-    res.status(500).json({ error: e.message || 'Visualize failed' });
-  }
-});
-
 export default router;
