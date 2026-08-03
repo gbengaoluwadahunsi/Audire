@@ -4519,19 +4519,42 @@
   background: var(--bg-base);
 }
 
+/* The container is mounted for the whole reading session; `.is-split` marks the
+   moments when a second pane is actually open. Everything that changes how the
+   reader looks is scoped to `.is-split` so solo reading renders exactly as before. */
 .split-pane {
   position: relative;
   height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.is-split .split-pane {
   opacity: 0.85;
   transition: opacity 0.3s;
 }
 
-.split-pane.active-pane {
+/* Either slot can be drawn on either side — only the visual order changes,
+   so neither reader is ever remounted by a swap. */
+.split-view-container.is-swapped {
+  flex-direction: row-reverse;
+}
+
+/* Holds whatever the right pane is showing (reader or app), below its top bar */
+.split-pane-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.is-split .split-pane.active-pane {
   opacity: 1;
 }
 
-.split-pane.active-pane::after {
+.is-split .split-pane.active-pane::after {
   content: '';
   position: absolute;
   top: 0;
@@ -4572,7 +4595,11 @@
   .split-view-container {
     flex-direction: column;
   }
-  
+
+  .split-view-container.is-swapped {
+    flex-direction: column-reverse;
+  }
+
   .split-pane {
     width: 100% !important; /* override inline style */
     flex: 1;
@@ -4596,32 +4623,260 @@
 
 /* Override reader positioning inside split panes so each Reader
    fills its pane container instead of the entire viewport */
-.split-pane .reader-view {
+.is-split .split-pane .reader-view {
   position: absolute;
   inset: 0;
   z-index: 1;
 }
 
-.split-pane .reader-sidebar {
+.is-split .split-pane .reader-sidebar {
   position: absolute;
 }
 
 /* Compact reader header in split mode */
-.split-pane .reader-header {
+.is-split .split-pane .reader-header {
   padding: 6px 10px;
   gap: 6px;
 }
 
-.split-pane .book-title h2 {
+.is-split .split-pane .book-title h2 {
   font-size: 0.8rem;
 }
 
-.split-pane .book-title p {
+.is-split .split-pane .book-title p {
   font-size: 0.65rem;
 }
 
-.split-pane .reader-actions .control-btn {
+.is-split .split-pane .reader-actions .control-btn {
   padding: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   Right pane chrome: switch between "read a second book" and "use the app"
+   -------------------------------------------------------------------------- */
+
+.split-pane-top-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  z-index: 60;
+}
+
+.split-pane-title {
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.split-pane-title span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.split-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.split-pane-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.split-pane-mode-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary);
+  color: var(--text-primary);
+}
+
+.split-pane-icon-btn,
+.split-pane-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 8px);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.split-pane-icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.split-pane-close-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.split-pane-app-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   The dashboard rendered inside a split pane — compact, and scoped to the pane
+   instead of the viewport (no fixed-position mobile chrome, no 100vh).
+   -------------------------------------------------------------------------- */
+
+.dashboard-in-pane {
+  height: 100%;
+  min-height: 0;
+  /* Neutralise the viewport-level responsive overrides — the pane is the viewport here */
+  grid-template-columns: 150px 1fr;
+  grid-template-rows: 1fr auto;
+  padding: 0;
+}
+
+/* The app pane is fully interactive, so don't dim it like an idle reader pane */
+.split-pane.split-pane-app-mode {
+  opacity: 1;
+}
+
+.dashboard-in-pane .dashboard-sidebar {
+  display: flex !important; /* beat the mobile rule that hides the desktop sidebar */
+  padding: 14px 10px 14px;
+  gap: 4px;
+}
+
+.dashboard-in-pane .dashboard-mobile-header,
+.dashboard-in-pane .dashboard-mobile-nav {
+  display: none !important; /* these are position: fixed and would escape the pane */
+}
+
+.dashboard-in-pane .dashboard-brand {
+  padding: 0 6px 14px;
+  gap: 8px;
+}
+
+.dashboard-in-pane .dashboard-brand-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.dashboard-in-pane .dashboard-brand span {
+  font-size: 0.95rem;
+}
+
+.dashboard-in-pane .dashboard-back {
+  display: none;
+}
+
+.dashboard-in-pane .dashboard-nav-item,
+.dashboard-in-pane .dashboard-add-book,
+.dashboard-in-pane .dashboard-import-url {
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  gap: 8px;
+}
+
+.dashboard-in-pane .dashboard-nav-item svg,
+.dashboard-in-pane .dashboard-add-book svg,
+.dashboard-in-pane .dashboard-import-url svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.dashboard-in-pane .dashboard-main {
+  padding: 16px 18px 0 !important;
+  min-width: 0;
+}
+
+.dashboard-in-pane .dashboard-header {
+  margin-bottom: 14px;
+}
+
+.dashboard-in-pane .dashboard-header h1 {
+  font-size: 1.15rem;
+}
+
+.dashboard-in-pane .dashboard-library-toolbar {
+  gap: 8px;
+}
+
+.dashboard-in-pane .dashboard-search {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.dashboard-in-pane .dashboard-content {
+  padding-bottom: 32px !important;
+  padding-right: 6px;
+}
+
+.dashboard-in-pane .dashboard-grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.dashboard-in-pane .dashboard-book-info h3 {
+  font-size: 0.8rem;
+}
+
+/* Stacked (mobile) split: drop the sidebar and use the mobile header/tab bar,
+   un-fixed so they stay inside the pane instead of overlaying the whole screen. */
+@media (max-width: 768px) {
+  .dashboard-in-pane {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dashboard-in-pane .dashboard-sidebar {
+    display: none !important;
+  }
+
+  .dashboard-in-pane .dashboard-mobile-header,
+  .dashboard-in-pane .dashboard-mobile-nav {
+    display: flex !important;
+    position: static;
+    flex: 0 0 auto;
+    z-index: auto;
+  }
+
+  .dashboard-in-pane .dashboard-mobile-header {
+    height: 48px;
+  }
+
+  .dashboard-in-pane .dashboard-mobile-nav {
+    height: 54px;
+    padding-bottom: 0;
+  }
+
+  .dashboard-in-pane .dashboard-main {
+    flex: 1;
+    min-height: 0;
+    padding: 12px 12px 0 !important;
+  }
 }
 
 /* ==========================================================================
@@ -4776,6 +5031,51 @@
   gap: 8px;
 }
 
+
+.split-picker-app-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius-md, 12px);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.split-picker-app-btn:hover {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.split-picker-app-btn svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.split-picker-app-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.split-picker-app-text strong {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.split-picker-app-text em {
+  font-style: normal;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
 
 .split-picker-remove-btn {
   display: flex;
