@@ -244,7 +244,8 @@ router.post('/', upload.single('file'), async (req, res) => {
         const savedFilePath = req.file.path;
 
         const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
-        if (r2FileUrl) fileUrl = r2FileUrl;
+        if (!r2FileUrl) throw new Error('R2 returned no URL for the book file');
+        fileUrl = r2FileUrl;
 
         if (coverPath) {
           const isPng = coverPath.toLowerCase().endsWith('.png');
@@ -257,7 +258,15 @@ router.post('/', upload.single('file'), async (req, res) => {
 
         if (global.gc) global.gc();
       } catch (r2Err) {
-        console.warn('R2 upload error (falling back to Render API URLs):', r2Err.message);
+        // Render's disk is ephemeral: a book that only exists locally is gone at the
+        // next deploy, leaving a library row whose file 404s forever. Better to fail
+        // the upload now than to hand back a book that will quietly rot.
+        console.error('R2 upload failed, rejecting upload:', r2Err.message);
+        await fs.unlink(req.file.path).catch(() => { });
+        if (coverPath) await fs.unlink(coverPath).catch(() => { });
+        return res.status(502).json({
+          error: 'Could not store the book file. Please try again.',
+        });
       }
     }
 
@@ -452,8 +461,13 @@ router.get('/:id/cover', async (req, res) => {
           if (row.cover && /r2\.dev|r2\.cloudflarestorage\.com/i.test(row.cover)) {
             return res.redirect(row.cover);
           }
-          // Fallback: redirect to known R2 pattern (covers uploaded as .png by default for PDFs, .jpg for EPUBs)
-          // Try .png first (most common since PDF covers are rendered as PNG)
+          // Bytes we hold ourselves beat guessing at an R2 key that may not exist.
+          if (row.cover_data) {
+            res.setHeader('Content-Type', 'image/jpeg');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            return res.send(row.cover_data);
+          }
+          // Last guess: the key pattern the upload path writes (.png for PDFs, .jpg for EPUBs)
           return res.redirect(`${r2PublicBase}/covers/${id}.png`);
         }
       } catch { }
@@ -555,16 +569,41 @@ router.post('/:id/cover', multer({
       return res.status(400).json({ error: 'No file uploaded' });
     }
     const baseUrl = getBaseUrl(req);
-    const coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
-    // Try DB update but don't fail if offline — cover is already on disk
+    let coverUrl = `${baseUrl}/api/books/${req.params.id}/cover`;
+    let coverBuffer = null;
+
+    // Push it to R2 — the local copy dies with the next deploy, and covers uploaded
+    // from the browser at upload time come through here.
+    if (isR2Configured()) {
+      try {
+        const isPng = /\.png$/i.test(req.file.filename || req.file.originalname || '');
+        const ext = isPng ? 'png' : 'jpg';
+        const r2CoverUrl = await uploadToR2(
+          req.file.path,
+          `covers/${req.params.id}.${ext}`,
+          isPng ? 'image/png' : 'image/jpeg'
+        );
+        if (r2CoverUrl) coverUrl = r2CoverUrl;
+      } catch (r2Err) {
+        console.warn('Cover R2 upload failed, keeping DB copy:', r2Err.message);
+      }
+    }
+    // Without R2 the disk copy is not durable either, so keep the bytes in Postgres.
+    if (!/r2\.dev|r2\.cloudflarestorage\.com/i.test(coverUrl)) {
+      coverBuffer = await fs.readFile(req.file.path).catch(() => null);
+    }
+
     try {
-      const coverBuffer = await fs.readFile(req.file.path);
       await query(
-        'UPDATE books SET cover = $2, cover_data = $3 WHERE id = $1',
+        'UPDATE books SET cover = $2, cover_data = COALESCE($3, cover_data) WHERE id = $1',
         [req.params.id, coverUrl, coverBuffer]
       );
     } catch (dbErr) {
       console.warn('DB cover update failed (saved locally):', dbErr.message);
+    }
+
+    if (isR2Configured()) {
+      await fs.unlink(req.file.path).catch(() => { });
     }
     res.json({ cover: coverUrl });
   } catch (err) {

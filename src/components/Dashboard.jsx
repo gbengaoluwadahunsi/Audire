@@ -292,7 +292,11 @@ function Dashboard({ onBackToLanding }) {
    * the gap — mainly PDFs. Never let a cover failure fail the upload.
    */
   const attachCoverFromBrowser = async (uploaded, file) => {
-    if (!uploaded?.id || uploaded.cover) return;
+    // `cover` is never null in the API response — the backend fills it with its own
+    // /cover endpoint even when no image exists. A stored R2 URL is the only proof
+    // that a real cover was extracted server-side.
+    const hasRealCover = /r2\.dev|r2\.cloudflarestorage\.com/i.test(uploaded?.cover || '');
+    if (!uploaded?.id || hasRealCover) return;
     try {
       // Loaded on demand — fileProcessor pulls in pdf.js and jszip.
       const { processFile } = await import('../lib/fileProcessor');
