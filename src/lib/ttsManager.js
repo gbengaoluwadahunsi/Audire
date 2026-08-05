@@ -11,6 +11,11 @@ function _isAbortError(err) {
   return err?.name === 'AbortError' || /aborted|abort/i.test(String(err?.message || ''));
 }
 
+/** Milliseconds left on the backend cooldown, or 0 when it is clear. */
+function _cooldownRemaining() {
+  return Math.max(0, _edgeBackendUnavailableUntil - Date.now());
+}
+
 /**
  * Fetch MP3 audio for a text chunk from the Edge TTS backend.
  * Returns a Blob or null on failure.
@@ -29,7 +34,9 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
     let timer;
     try {
       const controller = new AbortController();
-      timer = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      // A cold Render instance can take well over 10s for its first synthesis; timing
+      // out that early turned a slow start into a run of "failed" chunks.
+      timer = setTimeout(() => controller.abort(), 20000);
       const res = await fetch(_apiUrl('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,6 +87,7 @@ class TTSManager {
     this._stopped = false;
     this.isPaused = false;
     this._failureCount = 0;
+    this._abortedOnFailure = false;
     this._audioCtx = null;
     this._gainNode = null;
     this._currentSource = null;
@@ -219,18 +227,52 @@ class TTSManager {
   _getBlobForChunk(textChunks, index, sessionId) {
     if (index >= textChunks.length) return null;
     const chunk = (textChunks[index] || '').trim();
-    if (!chunk || chunk.length < 2 || !/[a-zA-ZÀ-ÿ]/.test(chunk)) return null;
+    // Must agree with the ghost test in runLoop. When this was stricter, chunks like
+    // "42" or a lone letter passed there but were rejected here, and the resulting
+    // null counted as a synthesis failure even though the backend handles them fine.
+    if (!chunk || !/[a-zA-ZÀ-ÿ0-9]/.test(chunk)) return null;
 
     const key = `${chunk}|${this.edgeTtsVoice}|${this.speed}|${this.pitch}`;
     const cached = this._blobCache.get(index);
     if (cached?.key === key) return cached.promise;
 
+    let entry;
     const promise = (async () => {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
       return _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed, this.pitch);
-    })();
-    this._blobCache.set(index, { key, promise });
+    })().then((blob) => {
+      // Never memoise a failure. Prefetch runs three chunks ahead, so a momentary
+      // backend hiccup used to poison all three and they would stay silent for the
+      // rest of the session even after it recovered.
+      if (!blob || blob.size < 100) {
+        if (this._blobCache.get(index) === entry) this._blobCache.delete(index);
+        return null;
+      }
+      return blob;
+    });
+    entry = { key, promise };
+    this._blobCache.set(index, entry);
     return promise;
+  }
+
+  /**
+   * Re-attempt a chunk that came back empty, waiting out the backend cooldown first.
+   * Dropping straight to the next chunk silently swallowed whole sentences.
+   */
+  async _retryChunk(textChunks, index, sessionId, attempts = 2) {
+    for (let i = 0; i < attempts; i++) {
+      if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
+      const wait = _cooldownRemaining();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait + 100));
+      await this._waitIfPaused(sessionId);
+      if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
+
+      this._blobCache.delete(index);
+      const promise = this._getBlobForChunk(textChunks, index, sessionId);
+      const blob = promise ? await promise : null;
+      if (blob && blob.size >= 100) return blob;
+    }
+    return null;
   }
 
   async speakContinuous(textChunks, onChunkComplete, sessionId, metadata = {}) {
@@ -238,6 +280,7 @@ class TTSManager {
     this._stopped = false;
     this.isPaused = false;
     this._failureCount = 0;
+    this._abortedOnFailure = false;
 
     if (metadata.title || metadata.author || metadata.cover) {
       this.setMediaMetadata(metadata);
@@ -286,10 +329,20 @@ class TTSManager {
 
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
 
+      // An empty result usually means a transient backend error or its cooldown
+      // window, not that this sentence is unspeakable. Give it another go.
+      if (!blob || blob.size < 100) {
+        blob = await this._retryChunk(textChunks, currentIndex, sessionId);
+        if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
+      }
+
       if (!blob || blob.size < 100) {
         this._failureCount++;
         if (this._failureCount >= 3) {
           console.error('[TTS] Custom voice unreachable, stopping.');
+          // Flag it so the reader can tell this apart from reaching the end of the
+          // page — otherwise it reads the abort as "finished" and turns the page.
+          this._abortedOnFailure = true;
           return;
         }
         this._blobCache.delete(currentIndex);
@@ -343,6 +396,7 @@ class TTSManager {
     this._stopped = false;
     this.isPaused = false;
     this._failureCount = 0;
+    this._abortedOnFailure = false;
     this._cleanupCache();
   }
 
@@ -375,7 +429,9 @@ class TTSManager {
     if (!Array.isArray(textChunks) || textChunks.length === 0) return 0;
     const speakable = textChunks
       .map((c) => (c || '').trim())
-      .filter((c) => c.length >= 2 && /[a-zA-ZÀ-ÿ0-9]/.test(c));
+      // Same speakable test as playback, so offline caching cannot miss a chunk that
+      // playback will later ask for.
+      .filter((c) => /[a-zA-ZÀ-ÿ0-9]/.test(c));
     const total = speakable.length;
     let done = 0;
     let ok = 0;

@@ -972,6 +972,15 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           break;
         }
 
+        // The engine gave up part-way through the page. Advancing here would skip the
+        // rest of the page and look like the voice jumping ahead on its own, so stop
+        // and say so instead.
+        if (ttsManager._abortedOnFailure) {
+          console.warn('Reader: TTS aborted mid-page, not advancing');
+          addToast?.('Speech stopped — the voice service could not be reached. Press play to continue.', 'error');
+          break;
+        }
+
         // Advance to next part
         if (bookData.format === 'epub') {
           let loc = null;
