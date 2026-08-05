@@ -10,3 +10,16 @@ services:
         value: 20
       - key: DATABASE_URL
         sync: false
+      # Book files are stored in Cloudflare R2. Without these the service falls back
+      # to its own ephemeral disk and every uploaded book is lost on the next restart,
+      # so uploads now fail loudly instead. Set the values in the Render dashboard.
+      - key: CLOUDFLARE_R2_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_R2_ACCESS_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_R2_BUCKET
+        sync: false
+      - key: CLOUDFLARE_R2_PUBLIC_URL
+        sync: false

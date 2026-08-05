@@ -236,38 +236,48 @@ router.post('/', upload.single('file'), async (req, res) => {
       ? `${baseUrl}/api/books/${bookData.id}/cover`
       : null;
 
-    if (isR2Configured()) {
-      try {
-        const fmt = bookData.format || 'epub';
-        const fileKey = `books/${bookData.id}.${fmt}`;
-        const fileMime = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
-        const savedFilePath = req.file.path;
+    // Without R2 the file lives only on Render's ephemeral disk, so the row would
+    // outlive its bytes and 404 forever after the next restart. Refuse the upload
+    // rather than hand back a book that is already doomed.
+    if (!isR2Configured()) {
+      console.error('R2 is not configured (CLOUDFLARE_R2_* missing) — rejecting upload');
+      await fs.unlink(req.file.path).catch(() => { });
+      if (coverPath) await fs.unlink(coverPath).catch(() => { });
+      return res.status(503).json({
+        error: 'Book storage is not configured on the server, so the file could not be saved.',
+      });
+    }
 
-        const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
-        if (!r2FileUrl) throw new Error('R2 returned no URL for the book file');
-        fileUrl = r2FileUrl;
+    try {
+      const fmt = bookData.format || 'epub';
+      const fileKey = `books/${bookData.id}.${fmt}`;
+      const fileMime = fmt === 'pdf' ? 'application/pdf' : 'application/epub+zip';
+      const savedFilePath = req.file.path;
 
-        if (coverPath) {
-          const isPng = coverPath.toLowerCase().endsWith('.png');
-          const ext = isPng ? 'png' : 'jpg';
-          const coverKey = `covers/${bookData.id}.${ext}`;
-          const coverMime = isPng ? 'image/png' : 'image/jpeg';
-          const r2CoverUrl = await uploadToR2(coverPath, coverKey, coverMime);
-          if (r2CoverUrl) coverUrl = r2CoverUrl;
-        }
+      const r2FileUrl = await uploadToR2(savedFilePath, fileKey, fileMime);
+      if (!r2FileUrl) throw new Error('R2 returned no URL for the book file');
+      fileUrl = r2FileUrl;
 
-        if (global.gc) global.gc();
-      } catch (r2Err) {
-        // Render's disk is ephemeral: a book that only exists locally is gone at the
-        // next deploy, leaving a library row whose file 404s forever. Better to fail
-        // the upload now than to hand back a book that will quietly rot.
-        console.error('R2 upload failed, rejecting upload:', r2Err.message);
-        await fs.unlink(req.file.path).catch(() => { });
-        if (coverPath) await fs.unlink(coverPath).catch(() => { });
-        return res.status(502).json({
-          error: 'Could not store the book file. Please try again.',
-        });
+      if (coverPath) {
+        const isPng = coverPath.toLowerCase().endsWith('.png');
+        const ext = isPng ? 'png' : 'jpg';
+        const coverKey = `covers/${bookData.id}.${ext}`;
+        const coverMime = isPng ? 'image/png' : 'image/jpeg';
+        const r2CoverUrl = await uploadToR2(coverPath, coverKey, coverMime);
+        if (r2CoverUrl) coverUrl = r2CoverUrl;
       }
+
+      if (global.gc) global.gc();
+    } catch (r2Err) {
+      // Render's disk is ephemeral: a book that only exists locally is gone at the
+      // next deploy, leaving a library row whose file 404s forever. Better to fail
+      // the upload now than to hand back a book that will quietly rot.
+      console.error('R2 upload failed, rejecting upload:', r2Err.message);
+      await fs.unlink(req.file.path).catch(() => { });
+      if (coverPath) await fs.unlink(coverPath).catch(() => { });
+      return res.status(502).json({
+        error: 'Could not store the book file. Please try again.',
+      });
     }
 
     // Try DB insert, but don't fail the upload if DB is offline
