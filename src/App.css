@@ -1511,6 +1511,49 @@
   font-size: 0.85rem;
 }
 
+/* Same footprint as a book thumb so the preview row stays on one baseline, but
+   clearly a folder rather than a cover. */
+.dashboard-collection-folder-thumb {
+  width: 72px;
+  height: 104px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dashboard-collection-folder-thumb:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.dashboard-collection-folder-name {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  line-height: 1.2;
+  /* Folder names are user-supplied and often long. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.dashboard-collection-folder-count {
+  font-size: 0.62rem;
+  color: var(--text-tertiary);
+}
+
 .dashboard-collection-book-thumb {
   width: 72px;
   height: 104px;

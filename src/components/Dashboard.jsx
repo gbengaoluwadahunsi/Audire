@@ -1283,7 +1283,8 @@ function Dashboard({ onBackToLanding }) {
                     <div className="dashboard-collections-list">
                       {collections.filter((c) => !c.parentId).map((c) => {
                         const totalBooks = getCollectionTotalBooks(c.id, collections);
-                        const childFolders = collections.filter((sub) => sub.parentId === c.id).length;
+                        const childFolderList = collections.filter((sub) => sub.parentId === c.id);
+                        const childFolders = childFolderList.length;
                         const visibleBooks = c.bookIds
                           .map((bid) => books.find((b) => b.id === bid))
                           .filter(Boolean);
@@ -1341,12 +1342,32 @@ function Dashboard({ onBackToLanding }) {
                               {childFolders > 0 ? `${childFolders} subfolder${childFolders > 1 ? 's' : ''} • ` : ''}
                               {totalBooks} book{totalBooks !== 1 ? 's' : ''}
                             </p>
-                            {visibleBooks.length === 0 ? (
+                            {visibleBooks.length === 0 && childFolders === 0 ? (
                               <div className="dashboard-collection-empty">
-                                {childFolders > 0 ? 'Contains subfolders.' : 'No books in this collection yet.'}
+                                No books in this collection yet.
                               </div>
                             ) : (
                               <div className="dashboard-collection-books">
+                                {/* Subfolders lead, so a collection that is mostly folders
+                                    still shows what is inside it rather than a bare count. */}
+                                {childFolderList.map((sub) => (
+                                  <div
+                                    key={sub.id}
+                                    className="dashboard-collection-folder-thumb"
+                                    title={`Open "${sub.name}"`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedCollection(sub);
+                                      setCollectionSelectedIds(new Set());
+                                    }}
+                                  >
+                                    <Folder size={22} color="var(--accent)" />
+                                    <span className="dashboard-collection-folder-name">{sub.name}</span>
+                                    <span className="dashboard-collection-folder-count">
+                                      {getCollectionTotalBooks(sub.id, collections)}
+                                    </span>
+                                  </div>
+                                ))}
                                 {visibleBooks.map((b) => (
                                   <div
                                     key={b.id}
@@ -1356,8 +1377,16 @@ function Dashboard({ onBackToLanding }) {
                                       openBook(b);
                                     }}
                                   >
-                                    {b.cover ? (
-                                      <img src={b.cover} alt={b.title} />
+                                    {b.cover && !coverErrorIds.has(b.id) ? (
+                                      <img
+                                        src={b.cover}
+                                        alt={b.title}
+                                        // A cover that 404s used to leave an empty black
+                                        // tile with no hint of what the book was.
+                                        onError={() =>
+                                          setCoverErrorIds((prev) => new Set([...prev, b.id]))
+                                        }
+                                      />
                                     ) : (
                                       <div className="dashboard-collection-book-placeholder">
                                         <FileText size={16} />
