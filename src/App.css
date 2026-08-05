@@ -1616,6 +1616,7 @@
 
 .collection-book-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
@@ -1639,6 +1640,18 @@
 .collection-book-action:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+/* Matches the Remove/Delete buttons, so it has to shed the native select chrome.
+   Takes a row of its own: sharing one with both buttons squeezed the label down to
+   "Mov…" on a normal card and to an unreadable sliver on a narrow one. */
+.collection-book-move {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-align: center;
+  text-overflow: ellipsis;
+  flex: 1 0 100%;
 }
 
 .collection-book-action.danger {

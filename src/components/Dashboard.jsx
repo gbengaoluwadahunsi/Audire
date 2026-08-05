@@ -259,6 +259,49 @@ function Dashboard({ onBackToLanding }) {
     }
   };
 
+  /** Move a book out of a collection and into one of its subfolders. */
+  const handleMoveBookToSubfolder = async (book, fromId, toId) => {
+    const target = collections.find((c) => c.id === toId);
+    if (!target || fromId === toId) return;
+
+    // Add before removing, so a failure part-way leaves the book in a folder
+    // rather than dropping it out of the collection tree entirely.
+    // Each helper already returns the refreshed list, so use the last one rather
+    // than paying for another round trip.
+    let refreshed;
+    try {
+      await addBookToCollection(toId, book.id);
+      refreshed = await removeBookFromCollection(fromId, book.id);
+    } catch (err) {
+      addToast(`Could not move "${book.title}": ${err.message}`, 'error');
+      setCollections(await getCollections());
+      return;
+    }
+
+    setCollections(refreshed);
+    setSelectedCollection((prev) =>
+      prev && prev.id === fromId
+        ? { ...prev, bookIds: prev.bookIds.filter((id) => id !== book.id) }
+        : prev
+    );
+
+    addToast(`"${book.title}" moved to "${target.name}"`, 'success', 'Undo', async () => {
+      let undone;
+      try {
+        await addBookToCollection(fromId, book.id);
+        undone = await removeBookFromCollection(toId, book.id);
+      } catch (err) {
+        addToast(`Could not undo the move: ${err.message}`, 'error');
+      }
+      setCollections(undone || (await getCollections()));
+      setSelectedCollection((prev) =>
+        prev && prev.id === fromId
+          ? { ...prev, bookIds: [...(prev.bookIds || []), book.id] }
+          : prev
+      );
+    });
+  };
+
   const MAX_ATTEMPT_SIZE = 100 * 1024 * 1024; // 100 MB - won't try to compress larger (memory risk)
 
   const handleImportUrl = async () => {
@@ -1099,7 +1142,6 @@ function Dashboard({ onBackToLanding }) {
                     <DragDropCollection
                       bookIds={selectedCollection.bookIds}
                       books={books}
-                      collectionId={selectedCollection.id}
                       onReorder={(newIds) => handleReorderInCollection(selectedCollection.id, newIds)}
                       onRemoveBook={(book) => {
                         removeBookFromCollection(selectedCollection.id, book.id).then(async () => {
@@ -1124,6 +1166,10 @@ function Dashboard({ onBackToLanding }) {
                         });
                       }}
                       onDeleteBook={(book) => setShowDeleteConfirm(book.id)}
+                      subfolders={collections.filter((c) => c.parentId === selectedCollection.id)}
+                      onMoveBook={(book, targetId) =>
+                        handleMoveBookToSubfolder(book, selectedCollection.id, targetId)
+                      }
                       onSelectBook={openBook}
                       coverErrorIds={coverErrorIds}
                       onCoverError={(book) => {

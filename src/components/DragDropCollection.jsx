@@ -23,9 +23,9 @@ function SortableBookCard({
   onCoverError,
   onRemove,
   onDelete,
+  onMove,
+  subfolders,
   onSelectBook,
-  onUndoRemove,
-  collectionId,
   getProgressPercent,
 }) {
   const {
@@ -76,6 +76,25 @@ function SortableBookCard({
         <p>{book.author || 'Unknown'}</p>
       </div>
       <div className="collection-book-actions" onClick={(e) => e.stopPropagation()}>
+        {subfolders.length > 0 && (
+          <select
+            className="collection-book-action collection-book-move"
+            value=""
+            title="Move into a subfolder"
+            aria-label={`Move ${book.title} into a subfolder`}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const targetId = e.target.value;
+              e.target.value = ''; // stays a menu, never shows a selected folder
+              if (targetId) onMove(book, targetId);
+            }}
+          >
+            <option value="">Move to…</option>
+            {subfolders.map((sub) => (
+              <option key={sub.id} value={sub.id}>{sub.name}</option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           className="collection-book-action"
@@ -100,10 +119,11 @@ function SortableBookCard({
 function DragDropCollection({
   bookIds,
   books,
-  collectionId,
   onReorder,
   onRemoveBook,
   onDeleteBook,
+  onMoveBook,
+  subfolders = [],
   onSelectBook,
   coverErrorIds,
   onCoverError,
@@ -149,8 +169,9 @@ function DragDropCollection({
                 onCoverError={onCoverError}
                 onRemove={onRemoveBook}
                 onDelete={onDeleteBook}
+                onMove={onMoveBook}
+                subfolders={subfolders}
                 onSelectBook={onSelectBook}
-                collectionId={collectionId}
                 getProgressPercent={getProgressPercent}
               />
             );

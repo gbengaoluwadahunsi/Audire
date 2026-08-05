@@ -144,23 +144,34 @@ router.delete('/highlights/:id', async (req, res) => {
 /** GET /collections */
 router.get('/collections', async (req, res) => {
   try {
+    // Two queries, not one per collection. Querying members per collection meant a
+    // round trip to Neon for every folder, which put this endpoint over 5 seconds —
+    // and the client refetches it after every collection edit.
     const { rows: cols } = await query(
       'SELECT id, name, parent_id, sort_order, created_at FROM user_collections ORDER BY sort_order ASC, created_at ASC'
     );
-    const out = [];
-    for (const c of cols) {
-      const { rows: books } = await query(
-        'SELECT book_id FROM user_collection_books WHERE collection_id = $1 ORDER BY position ASC',
-        [c.id]
-      );
-      out.push({
+    const { rows: links } = await query(
+      'SELECT collection_id, book_id FROM user_collection_books ORDER BY position ASC'
+    );
+
+    const byCollection = new Map();
+    for (const link of links) {
+      let ids = byCollection.get(link.collection_id);
+      if (!ids) {
+        ids = [];
+        byCollection.set(link.collection_id, ids);
+      }
+      ids.push(link.book_id);
+    }
+
+    res.json(
+      cols.map((c) => ({
         id: c.id,
         name: c.name,
         parentId: c.parent_id || null,
-        bookIds: books.map((b) => b.book_id),
-      });
-    }
-    res.json(out);
+        bookIds: byCollection.get(c.id) || [],
+      }))
+    );
   } catch (err) {
     console.error('librarySync collections GET:', err);
     res.status(500).json({ error: err.message });
