@@ -97,6 +97,37 @@ export async function removeBookFromCollection(collectionId, bookId) {
   return getCollections();
 }
 
+/**
+ * Move books from one collection to another, refreshing the list once at the end.
+ * Calling addBookToCollection/removeBookFromCollection per book would refetch every
+ * collection twice per book, which is several seconds each on a remote database.
+ *
+ * Each book is added to the target before being removed from the source, so a
+ * failure part-way leaves it in both collections rather than in neither.
+ */
+export async function moveBooksToCollection(fromId, toId, bookIds) {
+  const ids = Array.isArray(bookIds) ? bookIds : [bookIds];
+  if (!ids.length || fromId === toId) return getCollections();
+
+  if (!isLibrarySyncConfigured()) {
+    const cols = getCollectionsLocal();
+    const from = cols.find((c) => c.id === fromId);
+    const to = cols.find((c) => c.id === toId);
+    for (const id of ids) {
+      if (to && !to.bookIds.includes(id)) to.bookIds.push(id);
+      if (from) from.bookIds = from.bookIds.filter((bid) => bid !== id);
+    }
+    saveCollectionsLocal(cols);
+    return cols;
+  }
+
+  for (const id of ids) {
+    await librarySyncAddBookToCollection(toId, id);
+    await librarySyncRemoveBookFromCollection(fromId, id);
+  }
+  return getCollections();
+}
+
 export async function getBookCollections(bookId) {
   const all = await getCollections();
   return all.filter((c) => c.bookIds.includes(bookId));

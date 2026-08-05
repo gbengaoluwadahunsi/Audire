@@ -1614,6 +1614,14 @@
   padding-bottom: 12px;
 }
 
+/* The selection checkbox owns the top-left corner, as it does in the library grid,
+   so the reorder grip drops to the bottom of the cover. They were both pinned to
+   top-left and the grip swallowed every click meant for the checkbox. */
+.collection-book-card .drag-handle {
+  top: auto;
+  bottom: 8px;
+}
+
 .collection-book-actions {
   display: flex;
   flex-wrap: wrap;

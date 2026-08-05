@@ -26,6 +26,9 @@ function SortableBookCard({
   onMove,
   subfolders,
   onSelectBook,
+  isSelected,
+  anySelected,
+  onToggleSelect,
   getProgressPercent,
 }) {
   const {
@@ -46,8 +49,30 @@ function SortableBookCard({
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="dashboard-book-card collection-book-card" onClick={() => onSelectBook(book)}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`dashboard-book-card collection-book-card ${isSelected ? 'selected' : ''}`}
+      onClick={(e) => {
+        // Once a selection is under way, a plain click extends it rather than
+        // opening the book — same rule the library grid uses.
+        if (e.shiftKey || e.metaKey || e.ctrlKey || anySelected) {
+          e.preventDefault();
+          onToggleSelect(book.id);
+        } else {
+          onSelectBook(book);
+        }
+      }}
+    >
       <div className="dashboard-book-cover">
+        <input
+          type="checkbox"
+          className="book-select-checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(book.id)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Select ${book.title}`}
+        />
         {book.cover && !coverErrorIds.has(book.id) ? (
           <img
             src={book.cover}
@@ -125,11 +150,16 @@ function DragDropCollection({
   onMoveBook,
   subfolders = [],
   onSelectBook,
+  selectedIds,
+  onToggleSelect,
   coverErrorIds,
   onCoverError,
   searchQuery = '',
   getProgressPercent,
 }) {
+  // Tolerate the prop being absent so the component still renders standalone.
+  const selected = selectedIds instanceof Set ? selectedIds : new Set();
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -172,6 +202,9 @@ function DragDropCollection({
                 onMove={onMoveBook}
                 subfolders={subfolders}
                 onSelectBook={onSelectBook}
+                isSelected={selected.has(book.id)}
+                anySelected={selected.size > 0}
+                onToggleSelect={onToggleSelect}
                 getProgressPercent={getProgressPercent}
               />
             );

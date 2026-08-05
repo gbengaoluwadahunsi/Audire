@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { compressIfNeeded, MAX_SIZE } from '../lib/compression';
 import { fetchBooks, uploadBook, uploadBookCover, deleteBook, importArticleFromUrl } from '../lib/api';
 import { buildArticleEpub } from '../lib/articleEpub';
-import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection } from '../lib/collections';
+import { getCollections, saveCollections, addCollection, addBookToCollection, removeBookFromCollection, removeCollection, moveBooksToCollection } from '../lib/collections';
 
 function getCollectionPath(colId, collections) {
   if (!colId || !collections) return [];
@@ -105,6 +105,10 @@ function Dashboard({ onBackToLanding }) {
   const [formatFilter, setFormatFilter] = useState('all');
   const [showCollectionDeleteConfirm, setShowCollectionDeleteConfirm] = useState(null);
   const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
+  // Kept separate from selectedBookIds so a library selection and a collection
+  // selection can't bleed into each other.
+  const [collectionSelectedIds, setCollectionSelectedIds] = useState(new Set());
+  const [isMovingBooks, setIsMovingBooks] = useState(false);
   const [exportBook, setExportBook] = useState(null);
   const [splitPickerSearch, setSplitPickerSearch] = useState('');
   const fileInputRef = useRef(null);
@@ -259,46 +263,54 @@ function Dashboard({ onBackToLanding }) {
     }
   };
 
-  /** Move a book out of a collection and into one of its subfolders. */
-  const handleMoveBookToSubfolder = async (book, fromId, toId) => {
+  /** Move one or more books out of a collection and into one of its subfolders. */
+  const handleMoveBooksToSubfolder = async (bookIds, fromId, toId, label) => {
+    const ids = Array.isArray(bookIds) ? bookIds : [bookIds];
     const target = collections.find((c) => c.id === toId);
-    if (!target || fromId === toId) return;
+    if (!target || !ids.length || fromId === toId) return;
 
-    // Add before removing, so a failure part-way leaves the book in a folder
-    // rather than dropping it out of the collection tree entirely.
-    // Each helper already returns the refreshed list, so use the last one rather
-    // than paying for another round trip.
+    setIsMovingBooks(true);
     let refreshed;
     try {
-      await addBookToCollection(toId, book.id);
-      refreshed = await removeBookFromCollection(fromId, book.id);
+      refreshed = await moveBooksToCollection(fromId, toId, ids);
     } catch (err) {
-      addToast(`Could not move "${book.title}": ${err.message}`, 'error');
+      addToast(`Could not move ${label}: ${err.message}`, 'error');
       setCollections(await getCollections());
+      setIsMovingBooks(false);
       return;
     }
 
     setCollections(refreshed);
     setSelectedCollection((prev) =>
       prev && prev.id === fromId
-        ? { ...prev, bookIds: prev.bookIds.filter((id) => id !== book.id) }
+        ? { ...prev, bookIds: prev.bookIds.filter((id) => !ids.includes(id)) }
         : prev
     );
+    setCollectionSelectedIds(new Set());
+    setIsMovingBooks(false);
 
-    addToast(`"${book.title}" moved to "${target.name}"`, 'success', 'Undo', async () => {
+    addToast(`${label} moved to "${target.name}"`, 'success', 'Undo', async () => {
       let undone;
       try {
-        await addBookToCollection(fromId, book.id);
-        undone = await removeBookFromCollection(toId, book.id);
+        undone = await moveBooksToCollection(toId, fromId, ids);
       } catch (err) {
         addToast(`Could not undo the move: ${err.message}`, 'error');
       }
       setCollections(undone || (await getCollections()));
       setSelectedCollection((prev) =>
         prev && prev.id === fromId
-          ? { ...prev, bookIds: [...(prev.bookIds || []), book.id] }
+          ? { ...prev, bookIds: [...(prev.bookIds || []), ...ids] }
           : prev
       );
+    });
+  };
+
+  const toggleCollectionSelect = (bookId) => {
+    setCollectionSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(bookId)) next.delete(bookId);
+      else next.add(bookId);
+      return next;
     });
   };
 
@@ -1040,7 +1052,7 @@ function Dashboard({ onBackToLanding }) {
                       <div className="collection-breadcrumbs" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', marginBottom: '10px', flexWrap: 'wrap' }}>
                         <button
                           className="back-btn"
-                          onClick={() => { setSelectedCollection(null); setCollectionSearchQuery(''); }}
+                          onClick={() => { setSelectedCollection(null); setCollectionSearchQuery(''); setCollectionSelectedIds(new Set()); }}
                           style={{ padding: 0, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                         >
                           Collections
@@ -1049,7 +1061,7 @@ function Dashboard({ onBackToLanding }) {
                           <React.Fragment key={step.id}>
                             <ChevronRight size={14} color="var(--text-tertiary)" />
                             <button
-                              onClick={() => setSelectedCollection(step)}
+                              onClick={() => { setSelectedCollection(step); setCollectionSelectedIds(new Set()); }}
                               style={{
                                 padding: 0, background: 'none', border: 'none', cursor: 'pointer',
                                 color: idx === arr.length - 1 ? 'var(--text-primary)' : 'var(--accent)',
@@ -1111,7 +1123,7 @@ function Dashboard({ onBackToLanding }) {
                               <div
                                 key={sub.id}
                                 className="dashboard-collection-card"
-                                onClick={() => setSelectedCollection(sub)}
+                                onClick={() => { setSelectedCollection(sub); setCollectionSelectedIds(new Set()); }}
                                 style={{ padding: '16px', background: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', cursor: 'pointer' }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
@@ -1139,7 +1151,54 @@ function Dashboard({ onBackToLanding }) {
                         aria-label="Search in collection"
                       />
                     </div>
+
+                    {collectionSelectedIds.size > 0 &&
+                      collections.filter((c) => c.parentId === selectedCollection.id).length > 0 && (
+                        <div className="bulk-actions-bar">
+                          <span className="bulk-actions-count">
+                            {collectionSelectedIds.size} book{collectionSelectedIds.size > 1 ? 's' : ''} selected
+                          </span>
+                          <div className="bulk-actions-buttons">
+                            <select
+                              className="bulk-actions-select"
+                              value=""
+                              disabled={isMovingBooks}
+                              aria-label="Move selected books into a subfolder"
+                              onChange={(e) => {
+                                const toId = e.target.value;
+                                e.target.value = '';
+                                if (!toId) return;
+                                const ids = [...collectionSelectedIds];
+                                handleMoveBooksToSubfolder(
+                                  ids,
+                                  selectedCollection.id,
+                                  toId,
+                                  `${ids.length} book${ids.length > 1 ? 's' : ''}`
+                                );
+                              }}
+                            >
+                              <option value="">
+                                {isMovingBooks ? 'Moving…' : 'Move to subfolder…'}
+                              </option>
+                              {collections
+                                .filter((c) => c.parentId === selectedCollection.id)
+                                .map((sub) => (
+                                  <option key={sub.id} value={sub.id}>{sub.name}</option>
+                                ))}
+                            </select>
+                            <button
+                              className="bulk-actions-btn"
+                              onClick={() => setCollectionSelectedIds(new Set())}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                     <DragDropCollection
+                      selectedIds={collectionSelectedIds}
+                      onToggleSelect={toggleCollectionSelect}
                       bookIds={selectedCollection.bookIds}
                       books={books}
                       onReorder={(newIds) => handleReorderInCollection(selectedCollection.id, newIds)}
@@ -1168,7 +1227,12 @@ function Dashboard({ onBackToLanding }) {
                       onDeleteBook={(book) => setShowDeleteConfirm(book.id)}
                       subfolders={collections.filter((c) => c.parentId === selectedCollection.id)}
                       onMoveBook={(book, targetId) =>
-                        handleMoveBookToSubfolder(book, selectedCollection.id, targetId)
+                        handleMoveBooksToSubfolder(
+                          [book.id],
+                          selectedCollection.id,
+                          targetId,
+                          `"${book.title}"`
+                        )
                       }
                       onSelectBook={openBook}
                       coverErrorIds={coverErrorIds}
