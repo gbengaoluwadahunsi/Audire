@@ -53,7 +53,6 @@ function SplitView({
   });
   const activePaneCount = activeSlots.length;
   const isSplit = activePaneCount > 1;
-  const canAddPane = activePaneCount < 4;
 
   // Set default TTS book
   useEffect(() => {
@@ -137,6 +136,7 @@ function SplitView({
   }, []);
 
   const renderTopBar = (slot, kind, book) => {
+    const canAddPane = activePaneCount < 4;
     return (
       <div className="split-pane-top-bar">
         <div className="split-pane-title">
@@ -181,12 +181,11 @@ function SplitView({
           {canAddPane && (
             <button
               type="button"
-              className="split-pane-mode-btn split-pane-add-btn"
+              className="split-pane-icon-btn split-pane-add-btn"
               onClick={onAddPane}
-              title="Add another book side by side (up to 4)"
+              title="Add another pane (up to 4 books side by side)"
             >
               <Plus size={14} />
-              <span>Add Book</span>
             </button>
           )}
           <button
@@ -233,7 +232,6 @@ function SplitView({
               onOpenBook={onOpenBook}
               inSplitView={isSplit}
               onSplitScreen={isSplit ? () => onMaximizePane(slot) : onAddPane}
-              onAddPane={canAddPane ? onAddPane : null}
               onProgressUpdate={onProgressUpdate}
               addToast={addToast}
             />

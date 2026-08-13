@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import { ttsManager } from '../lib/ttsManager';
@@ -1625,15 +1625,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           >
             <FileText size={18} />
           </button>
-          {onAddPane && (
-            <button
-              className="control-btn split-add-btn"
-              onClick={onAddPane}
-              title="Add another book side by side (up to 4)"
-            >
-              <Plus size={18} />
-            </button>
-          )}
           {onSplitScreen && (
             <button
               className="control-btn"
