@@ -86,11 +86,11 @@ function Dashboard({ onBackToLanding }) {
   const [books, setBooks] = useState([]);
   const [collections, setCollections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedBook, setSelectedBook] = useState(null);
-  const [secondaryBook, setSecondaryBook] = useState(null);
-  const [splitPickerMode, setSplitPickerMode] = useState(null); // null, 'split', 'paneA', 'paneB'
-  const [appSlot, setAppSlot] = useState(null); // 'A' | 'B' | null — the pane showing the app itself
-  const [swapped, setSwapped] = useState(false); // which side each pane is drawn on
+  // 4-slot pane array: index 0→A, 1→B, 2→C, 3→D; each is a book object or null.
+  const [paneBooks, setPaneBooks] = useState([null, null, null, null]);
+  // null | 'A'|'B'|'C'|'D' — which pane shows the app shell instead of a book
+  const [splitPickerMode, setSplitPickerMode] = useState(null); // null | 'new' | 'A'|'B'|'C'|'D'
+  const [appSlot, setAppSlot] = useState(null); // 'A'|'B'|'C'|'D'|null
   const [isUploading, setIsUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState([]);
@@ -135,8 +135,7 @@ function Dashboard({ onBackToLanding }) {
   // Keep last_cfi in-memory fresh so switching books in split view restores the correct page.
   const handleProgressUpdate = React.useCallback((bookId, cfi) => {
     setBooks(prev => prev.map(b => b.id === bookId ? { ...b, last_cfi: cfi } : b));
-    setSelectedBook(prev => (prev?.id === bookId ? { ...prev, last_cfi: cfi } : prev));
-    setSecondaryBook(prev => (prev?.id === bookId ? { ...prev, last_cfi: cfi } : prev));
+    setPaneBooks(prev => prev.map(b => b?.id === bookId ? { ...b, last_cfi: cfi } : b));
   }, []);
 
   useEffect(() => {
@@ -174,52 +173,53 @@ function Dashboard({ onBackToLanding }) {
   const clearSelection = () => setSelectedBookIds(new Set());
 
   /* ---- Split panes -------------------------------------------------------
-     Slot A and slot B each hold a book; `appSlot` marks the one showing the app
-     instead, and `swapped` only decides which side each slot is drawn on. Books
-     never move between slots, so a reader is never remounted (and never stops
-     reading aloud) just because the panes were rearranged. */
+     Up to 4 slots (A, B, C, D) each hold a book; `appSlot` marks the one
+     showing the app shell instead. Books never move between slots, so readers
+     are never remounted (and never stop reading aloud) during rearrangement. */
 
-  const bookInSlot = (slot) => (slot === 'A' ? selectedBook : secondaryBook);
-  const setBookInSlot = (slot, book) => (slot === 'A' ? setSelectedBook(book) : setSecondaryBook(book));
-  const otherSlot = (slot) => (slot === 'A' ? 'B' : 'A');
+  const SLOT_KEYS = ['A', 'B', 'C', 'D'];
+  const slotIndex = (slot) => SLOT_KEYS.indexOf(slot);
+  const bookInSlot = (slot) => paneBooks[slotIndex(slot)];
+  const setBookInSlot = (slot, book) =>
+    setPaneBooks(prev => { const next = [...prev]; next[slotIndex(slot)] = book; return next; });
+
+  // IDs of all books currently open in any pane
+  const openBookIds = new Set(paneBooks.filter(Boolean).map(b => b.id));
+
+  // First empty slot, or null if all 4 are occupied
+  const firstEmptySlot = SLOT_KEYS.find(s => paneBooks[slotIndex(s)] == null && s !== appSlot) ?? null;
 
   const openBookPicker = (slot) => {
     setSplitPickerSearch('');
-    setSplitPickerMode(slot === 'A' ? 'paneA' : 'paneB');
+    setSplitPickerMode(slot);          // 'A'|'B'|'C'|'D'
+  };
+
+  const openNewPanePicker = () => {
+    setSplitPickerSearch('');
+    setSplitPickerMode('new');         // fill the next empty slot
   };
 
   const closePane = (slot) => {
     setBookInSlot(slot, null);
-    setAppSlot(null);
-    setSwapped(false);
+    if (appSlot === slot) setAppSlot(null);
     loadBooks();
   };
 
-  // Put the app on the side the user clicked. If that pane is the one currently
-  // reading aloud — or the only book open — the app takes the other slot instead
-  // and the panes flip, so it still appears where it was asked for without
-  // unmounting (and silencing) the reader.
+  // Put the app in the requested slot straightforwardly.
   const showAppOnSide = (slot) => {
-    const here = bookInSlot(slot);
-    const there = bookInSlot(otherSlot(slot));
-    const readingHere = here && currentBook?.id === here.id;
-    const target = there && !readingHere ? slot : otherSlot(slot);
-    setAppSlot(target);
-    if (target !== slot) setSwapped((s) => !s);
+    setAppSlot(slot);
   };
 
   // Books can now be deleted from the app pane while other panes are reading them,
   // so close any pane whose book just disappeared.
   const dropDeletedFromPanes = (deletedIds) => {
     const gone = new Set(deletedIds);
-    const keptA = selectedBook && !gone.has(selectedBook.id) ? selectedBook : null;
-    const keptB = secondaryBook && !gone.has(secondaryBook.id) ? secondaryBook : null;
-    if (!keptA) setSelectedBook(null);
-    if (!keptB) setSecondaryBook(null);
-    // An app pane needs a book on the other side to be worth showing.
-    if ((appSlot === 'A' && !keptB) || (appSlot === 'B' && !keptA)) {
-      setAppSlot(null);
-      setSwapped(false);
+    setPaneBooks(prev => prev.map(b => (b && gone.has(b.id) ? null : b)));
+    // An app pane needs at least one other book to be worth showing.
+    if (appSlot) {
+      const otherBooks = SLOT_KEYS.filter(s => s !== appSlot).map(s => paneBooks[slotIndex(s)]);
+      const anyOtherBook = otherBooks.some(b => b && !gone.has(b.id));
+      if (!anyOtherBook) setAppSlot(null);
     }
   };
 
@@ -506,36 +506,42 @@ function Dashboard({ onBackToLanding }) {
       return mult * (cmp || tiebreaker);
     });
 
-  if (selectedBook || secondaryBook) {
-    // Which slot the picker is filling. 'split' comes from a solo pane, so it targets
-    // whichever slot is still empty.
-    const pickerSlot =
-      splitPickerMode === 'paneA' ? 'A'
-      : splitPickerMode === 'paneB' ? 'B'
-      : (selectedBook ? 'B' : 'A');
+  // Any slot has content (book or app) → show the split-view shell.
+  const anyPaneActive = paneBooks.some(Boolean) || !!appSlot;
+
+  if (anyPaneActive) {
+    // Resolve the target slot for the picker.
+    // • 'new'        → first empty slot
+    // • 'A'|'B'|'C'|'D' → that specific slot (change/fill)
+    const pickerSlot = splitPickerMode === 'new' ? firstEmptySlot : splitPickerMode;
 
     return (
       <>
-        {/* SplitView stays mounted for the whole session — opening, closing or swapping
-            panes never remounts a reader, so a book keeps reading aloud throughout. */}
+        {/* SplitView stays mounted for the whole session — pane operations
+            never remount a reader, so a book keeps reading aloud throughout. */}
         <SplitView
-          bookA={selectedBook}
-          bookB={secondaryBook}
+          paneBooks={paneBooks}
           appSlot={appSlot}
           appContent={appSlot ? renderDashboardShell(true) : null}
-          swapped={swapped}
-          onOpenBook={setSelectedBook}
+          onOpenBook={(book) => {
+            // Opening a book from inside SplitView: place it in the first free slot.
+            if (!book) return;
+            const freeSlot = SLOT_KEYS.find(s => !paneBooks[slotIndex(s)]);
+            if (freeSlot) setBookInSlot(freeSlot, book);
+          }}
           onChangeBook={openBookPicker}
           onClosePane={closePane}
-          onMaximizePane={(slot) => closePane(slot === 'A' ? 'B' : 'A')}
+          onMaximizePane={(slot) => {
+            // Close all other book panes; keep only this one.
+            SLOT_KEYS.forEach(s => { if (s !== slot) setBookInSlot(s, null); });
+            setAppSlot(null);
+          }}
           onShowApp={showAppOnSide}
           onReadBook={(slot) => {
-            // Keep the app up until a book is actually chosen for this pane.
             if (bookInSlot(slot)) setAppSlot(null);
             else openBookPicker(slot);
           }}
-          onSwapSides={() => setSwapped((s) => !s)}
-          onRequestSplit={() => { setSplitPickerSearch(''); setSplitPickerMode('split'); }}
+          onAddPane={openNewPanePicker}
           onProgressUpdate={handleProgressUpdate}
           addToast={addToast}
         />
@@ -544,12 +550,18 @@ function Dashboard({ onBackToLanding }) {
             <div className="split-picker-modal" onClick={e => e.stopPropagation()}>
               <div className="split-picker-header">
                 <div>
-                  <h2>{splitPickerMode === 'split' ? "Open Split View" : "Fill This Pane"}</h2>
+                  <h2>
+                    {splitPickerMode === 'new'
+                      ? 'Add a Pane'
+                      : bookInSlot(pickerSlot)
+                        ? 'Fill This Pane'
+                        : 'Open a Pane'}
+                  </h2>
                   <p>
-                    {splitPickerMode === 'split' ? (
-                      <>Read another book alongside <strong>{bookInSlot(otherSlot(pickerSlot))?.title}</strong>, or browse your library while it keeps playing</>
+                    {splitPickerMode === 'new' ? (
+                      <>Open another book alongside the ones already reading</>
                     ) : bookInSlot(pickerSlot) ? (
-                      <>Pick what replaces <strong>{bookInSlot(pickerSlot).title}</strong> in this pane</>
+                      <>Pick what replaces <strong>{bookInSlot(pickerSlot)?.title}</strong> in this pane</>
                     ) : (
                       <>Pick what goes in this pane</>
                     )}
@@ -576,25 +588,34 @@ function Dashboard({ onBackToLanding }) {
                 )}
               </div>
               <div className="split-picker-body">
-                <button
-                  type="button"
-                  className="split-picker-app-btn"
-                  onClick={() => { showAppOnSide(pickerSlot); setSplitPickerMode(null); }}
-                >
-                  <LayoutGrid size={18} />
-                  <span className="split-picker-app-text">
-                    <strong>Browse the app &amp; library</strong>
-                    <em>Add books, manage collections, delete — all while the other pane keeps reading aloud</em>
-                  </span>
-                </button>
+                {/* Only show "Browse App" option when changing an existing pane, not when adding a new one */}
+                {splitPickerMode !== 'new' && pickerSlot && (
+                  <button
+                    type="button"
+                    className="split-picker-app-btn"
+                    onClick={() => { showAppOnSide(pickerSlot); setSplitPickerMode(null); }}
+                  >
+                    <LayoutGrid size={18} />
+                    <span className="split-picker-app-text">
+                      <strong>Browse the app &amp; library</strong>
+                      <em>Add books, manage collections, delete — all while the other pane keeps reading aloud</em>
+                    </span>
+                  </button>
+                )}
                 {(() => {
                   const q = splitPickerSearch.toLowerCase().trim();
-                  const excludeId = bookInSlot(otherSlot(pickerSlot))?.id;
+                  // Exclude all books already open in any pane (except the slot being replaced)
+                  const excludeIds = new Set(
+                    SLOT_KEYS
+                      .filter(s => s !== pickerSlot)
+                      .map(s => paneBooks[slotIndex(s)]?.id)
+                      .filter(Boolean)
+                  );
                   const filtered = books
-                    .filter(b => b.id !== excludeId)
+                    .filter(b => !excludeIds.has(b.id))
                     .filter(b => !q || (b.title || '').toLowerCase().includes(q) || (b.author || '').toLowerCase().includes(q));
 
-                  const totalAvailable = books.filter(b => b.id !== excludeId).length;
+                  const totalAvailable = books.filter(b => !excludeIds.has(b.id)).length;
 
                   if (totalAvailable === 0) {
                     return (
@@ -612,35 +633,37 @@ function Dashboard({ onBackToLanding }) {
                   }
                   return (
                     <div className="split-picker-grid">
-                      {splitPickerMode !== 'split' && (
+                      {/* "Close this pane" only when replacing an existing book pane */}
+                      {splitPickerMode !== 'new' && pickerSlot && bookInSlot(pickerSlot) && (
                         <button
                           className="split-picker-remove-btn"
                           onClick={() => { closePane(pickerSlot); setSplitPickerMode(null); }}
                         >
                           <X size={16} />
-                          <span>Close This Pane (Exit Split View)</span>
+                          <span>Close This Pane</span>
                         </button>
                       )}
                       {filtered.map(book => (
-                      <button
-                        key={book.id}
-                        className="split-picker-card"
-                        onClick={() => {
-                          setBookInSlot(pickerSlot, book);
-                          if (appSlot === pickerSlot) setAppSlot(null);
-                          setSplitPickerMode(null);
-                        }}
-                      >
-                        <div className="split-picker-cover">
-                          {book.cover ? (
-                            <img src={book.cover} alt="" loading="lazy" />
-                          ) : (
-                            <div className="split-picker-cover-placeholder">
-                              {(book.title || '?')[0]}
-                            </div>
-                          )}
-                        </div>
-                        <div className="split-picker-info">
+                        <button
+                          key={book.id}
+                          className="split-picker-card"
+                          onClick={() => {
+                            if (!pickerSlot) return;
+                            setBookInSlot(pickerSlot, book);
+                            if (appSlot === pickerSlot) setAppSlot(null);
+                            setSplitPickerMode(null);
+                          }}
+                        >
+                          <div className="split-picker-cover">
+                            {book.cover ? (
+                              <img src={book.cover} alt="" loading="lazy" />
+                            ) : (
+                              <div className="split-picker-cover-placeholder">
+                                {(book.title || '?')[0]}
+                              </div>
+                            )}
+                          </div>
+                          <div className="split-picker-info">
                             <span className="split-picker-title">{book.title}</span>
                             <span className="split-picker-author">{book.author || 'Unknown Author'}</span>
                             <span className="split-picker-format">{(book.format || '').toUpperCase()}</span>
@@ -669,16 +692,21 @@ function Dashboard({ onBackToLanding }) {
     const openBook = inSplitPane
       ? (book) => {
           if (!book) return;
-          const reading = bookInSlot(otherSlot(appSlot));
-          if (book.id === reading?.id) {
-            // Already open on the other side — collapse back to a single reader.
+          // Check if this book is already open in one of the book panes.
+          const alreadyOpen = paneBooks.some(b => b?.id === book.id);
+          if (alreadyOpen) {
+            // The book is already reading — just close the app pane.
             closePane(appSlot);
             return;
           }
           setBookInSlot(appSlot, book);
           setAppSlot(null);
         }
-      : setSelectedBook;
+      : (book) => {
+          // Opening from the full-screen dashboard: put in the first empty slot (slot A).
+          if (!book) return;
+          setBookInSlot('A', book);
+        };
 
     return (
     <div className={`dashboard${inSplitPane ? ' dashboard-in-pane' : ''}`}>
@@ -1455,7 +1483,7 @@ function Dashboard({ onBackToLanding }) {
       </main>
 
       {/* The left pane already owns playback controls in split view. */}
-      {!inSplitPane && <MiniPlayer onOpenBook={setSelectedBook} />}
+      {!inSplitPane && <MiniPlayer onOpenBook={(book) => { if (book) setBookInSlot('A', book); }} />}
 
       {exportBook && (
         <ExportModal 

@@ -1,160 +1,214 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Reader from './Reader';
 import { usePlayback } from '../context/PlaybackContext';
-import { BookOpen, LayoutGrid, X, ArrowLeftRight } from 'lucide-react';
+import { BookOpen, LayoutGrid, X, Plus } from 'lucide-react';
 
 /**
- * Two interchangeable panes. Each one can hold a book or the app itself
- * (library, collections, settings…), and either side can be either thing.
+ * N-pane split view (N = 1 … 4).
  *
- * Two slots — A and B — own the state; `swapped` only flips which side they are
- * drawn on. Books therefore never move between slots, which matters because
- * Reader stops TTS when it unmounts: keeping a reader in its slot is what lets a
- * book keep reading aloud while you rearrange the panes around it.
+ * Each slot (A, B, C, D) is a stable identity for a reader — slots never
+ * swap positions so a reader is never unmounted (and never stops reading
+ * aloud) just because panes were rearranged.
  *
- * This component also stays mounted when only one pane is open, so opening and
- * closing the split never remounts the surviving reader.
+ * Props
+ * -----
+ * paneBooks     – array of exactly 4 entries; each is a book object or null.
+ *                 Index 0→A, 1→B, 2→C, 3→D.
+ * appSlot       – 'A'|'B'|'C'|'D'|null — which slot shows the app shell.
+ * appContent    – the React element to render in the app pane.
+ * onOpenBook    – (book) => void
+ * onChangeBook  – (slot) => void   – open picker to change this pane's book
+ * onClosePane   – (slot) => void
+ * onMaximizePane– (slot) => void   – keep this pane, close all others
+ * onShowApp     – (slot) => void   – show app shell in this pane
+ * onReadBook    – (slot) => void   – switch this pane back to reading mode
+ * onAddPane     – () => void       – open picker to add a new pane
+ * onProgressUpdate – (bookId, cfi) => void
+ * addToast      – (msg, type) => void
  */
+
+const SLOTS = ['A', 'B', 'C', 'D'];
+const slotIndex = (slot) => SLOTS.indexOf(slot);
+
 function SplitView({
-  bookA,
-  bookB,
-  appSlot = null, // 'A' | 'B' | null — which slot shows the app instead of a book
+  paneBooks,           // [bookA, bookB, bookC, bookD] — always length 4
+  appSlot = null,
   appContent,
-  swapped = false,
   onOpenBook,
-  onChangeBook, // (slot) => void
-  onClosePane, // (slot) => void
-  onMaximizePane, // (slot) => void — keep this pane, close the other
-  onShowApp, // (slot) => void — put the app on this pane's side
-  onReadBook, // (slot) => void — put a book back on this pane's side
-  onSwapSides,
-  onRequestSplit, // opening a split from a solo pane
+  onChangeBook,
+  onClosePane,
+  onMaximizePane,
+  onShowApp,
+  onReadBook,
+  onAddPane,           // () => void
   onProgressUpdate,
   addToast,
 }) {
   const { currentBook, setCurrentBook } = usePlayback();
 
-  // The app pane only earns its place while the other slot is actually reading.
-  const appOn = ((appSlot === 'A' && bookB) || (appSlot === 'B' && bookA)) ? appSlot : null;
-  const paneKind = {
-    A: appOn === 'A' ? 'app' : (bookA ? 'book' : null),
-    B: appOn === 'B' ? 'app' : (bookB ? 'book' : null),
-  };
-  const splitActive = !!paneKind.A && !!paneKind.B;
+  // Derive active slots (those with a book OR the app slot)
+  const activeSlots = SLOTS.filter((slot) => {
+    const idx = slotIndex(slot);
+    return paneBooks[idx] != null || slot === appSlot;
+  });
+  const activePaneCount = activeSlots.length;
+  const isSplit = activePaneCount > 1;
 
-  // By default, make the first available book the active context for TTS
+  // Set default TTS book
   useEffect(() => {
-    const fallback = bookA || bookB;
-    if (!currentBook && fallback) {
-      setCurrentBook(fallback);
+    const firstBook = paneBooks.find(Boolean);
+    if (!currentBook && firstBook) setCurrentBook(firstBook);
+  }, [paneBooks, currentBook, setCurrentBook]);
+
+  // Pane widths — one entry per active slot, sum = 100
+  const [widths, setWidths] = useState(() => {
+    const n = Math.max(activePaneCount, 1);
+    return Array(4).fill(100 / n);
+  });
+
+  // Re-distribute widths when the number of active panes changes
+  const prevCountRef = useRef(activePaneCount);
+  useEffect(() => {
+    if (prevCountRef.current !== activePaneCount) {
+      prevCountRef.current = activePaneCount;
+      const n = Math.max(activePaneCount, 1);
+      setWidths(Array(4).fill(100 / n));
     }
-  }, [bookA, bookB, currentBook, setCurrentBook]);
+  }, [activePaneCount]);
 
-  const [splitRatio, setSplitRatio] = useState(50);
-  const isDragging = useRef(false);
+  // Tell pdf.js / epub.js to re-paginate after layout changes
+  useEffect(() => {
+    const id = setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+    return () => clearTimeout(id);
+  }, [activePaneCount, appSlot]);
+
+  // Drag state
+  const draggingRef = useRef(null); // { leftSlotIdx, rightSlotIdx, startX, startLeftW, startRightW }
+
+  const handleResizerMouseDown = useCallback((e, leftActiveIdx, rightActiveIdx) => {
+    e.preventDefault();
+    const leftSlot = activeSlots[leftActiveIdx];
+    const rightSlot = activeSlots[rightActiveIdx];
+    draggingRef.current = {
+      leftSlotIdx: slotIndex(leftSlot),
+      rightSlotIdx: slotIndex(rightSlot),
+      startX: e.clientX,
+      startLeftW: widths[slotIndex(leftSlot)],
+      startRightW: widths[slotIndex(rightSlot)],
+    };
+    document.body.style.cursor = 'col-resize';
+  }, [activeSlots, widths]);
 
   useEffect(() => {
-    const handleMouseMove = (e) => {
-      if (!isDragging.current) return;
-      const width = window.innerWidth;
-      // splitRatio is always slot A's share; when the panes are swapped, slot A
-      // is the one on the right, so the pointer position has to be mirrored.
-      let newRatio = (e.clientX / width) * 100;
-      if (swapped) newRatio = 100 - newRatio;
-      if (newRatio < 20) newRatio = 20;
-      if (newRatio > 80) newRatio = 80;
-      setSplitRatio(newRatio);
+    const MIN_W = 15; // minimum pane width %
+
+    const onMouseMove = (e) => {
+      const d = draggingRef.current;
+      if (!d) return;
+      const totalW = window.innerWidth;
+      const deltaPct = ((e.clientX - d.startX) / totalW) * 100;
+      let newLeft = d.startLeftW + deltaPct;
+      let newRight = d.startRightW - deltaPct;
+      if (newLeft < MIN_W) { newRight += newLeft - MIN_W; newLeft = MIN_W; }
+      if (newRight < MIN_W) { newLeft += newRight - MIN_W; newRight = MIN_W; }
+      setWidths((prev) => {
+        const next = [...prev];
+        next[d.leftSlotIdx] = newLeft;
+        next[d.rightSlotIdx] = newRight;
+        return next;
+      });
     };
 
-    const handleMouseUp = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
+    const onMouseUp = () => {
+      if (draggingRef.current) {
+        draggingRef.current = null;
         document.body.style.cursor = 'default';
-        // Dispatch a resize event so that pdf.js or epub.js recalculates layout
         window.dispatchEvent(new Event('resize'));
       }
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [swapped]);
+  }, []);
 
-  // The panes changed shape — let pdf.js / epub.js re-paginate.
-  useEffect(() => {
-    const id = setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
-    return () => clearTimeout(id);
-  }, [splitActive, appSlot, swapped]);
-
-  const renderTopBar = (slot, kind, book) => (
-    <div className="split-pane-top-bar">
-      <div className="split-pane-title">
-        {kind === 'book' ? (
-          <span><BookOpen size={14} /> {book?.title || 'Book'}</span>
-        ) : (
-          <span><LayoutGrid size={14} /> App &amp; Library</span>
-        )}
-      </div>
-      <div className="split-pane-actions">
-        {kind === 'book' ? (
-          <>
+  const renderTopBar = (slot, kind, book) => {
+    const canAddPane = activePaneCount < 4;
+    return (
+      <div className="split-pane-top-bar">
+        <div className="split-pane-title">
+          {kind === 'book' ? (
+            <span><BookOpen size={14} /> {book?.title || 'Book'}</span>
+          ) : (
+            <span><LayoutGrid size={14} /> App &amp; Library</span>
+          )}
+        </div>
+        <div className="split-pane-actions">
+          {kind === 'book' ? (
+            <>
+              <button
+                type="button"
+                className="split-pane-mode-btn"
+                onClick={() => onShowApp(slot)}
+                title="Show the app & library on this side"
+              >
+                <LayoutGrid size={14} />
+                <span>Browse App</span>
+              </button>
+              <button
+                type="button"
+                className="split-pane-mode-btn"
+                onClick={() => onChangeBook(slot)}
+                title="Change the book in this pane"
+              >
+                Change Book
+              </button>
+            </>
+          ) : (
             <button
               type="button"
               className="split-pane-mode-btn"
-              onClick={() => onShowApp(slot)}
-              title="Show the app & library on this side"
+              onClick={() => onReadBook(slot)}
+              title="Read a book on this side"
             >
-              <LayoutGrid size={14} />
-              <span>Browse App</span>
+              <BookOpen size={14} />
+              <span>Read Book</span>
             </button>
+          )}
+          {canAddPane && (
             <button
               type="button"
-              className="split-pane-mode-btn"
-              onClick={() => onChangeBook(slot)}
-              title="Change the book in this pane"
+              className="split-pane-icon-btn split-pane-add-btn"
+              onClick={onAddPane}
+              title="Add another pane (up to 4 books side by side)"
             >
-              Change Book
+              <Plus size={14} />
             </button>
-          </>
-        ) : (
+          )}
           <button
             type="button"
-            className="split-pane-mode-btn"
-            onClick={() => onReadBook(slot)}
-            title="Read a book on this side"
+            className="split-pane-close-btn"
+            onClick={() => onClosePane(slot)}
+            title="Close this pane"
           >
-            <BookOpen size={14} />
-            <span>Read Book</span>
+            <X size={15} />
           </button>
-        )}
-        <button
-          type="button"
-          className="split-pane-icon-btn"
-          onClick={onSwapSides}
-          title="Swap the two panes"
-        >
-          <ArrowLeftRight size={14} />
-        </button>
-        <button
-          type="button"
-          className="split-pane-close-btn"
-          onClick={() => onClosePane(slot)}
-          title="Close this pane"
-        >
-          <X size={15} />
-        </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const renderPane = (slot) => {
-    const kind = paneKind[slot];
+  const renderPane = (slot, activeIdx) => {
+    const idx = slotIndex(slot);
+    const book = paneBooks[idx];
+    const isApp = slot === appSlot;
+    const kind = isApp ? 'app' : (book ? 'book' : null);
     if (!kind) return null;
-    const book = slot === 'A' ? bookA : bookB;
-    const share = slot === 'A' ? splitRatio : 100 - splitRatio;
+
+    const widthPct = isSplit ? widths[idx] : 100;
 
     return (
       <div
@@ -164,20 +218,20 @@ function SplitView({
           kind === 'book' && currentBook?.id === book?.id ? 'active-pane' : '',
           kind === 'app' ? 'split-pane-app-mode' : '',
         ].filter(Boolean).join(' ')}
-        style={{ width: splitActive ? `${share}%` : '100%' }}
+        style={{ width: `${widthPct}%` }}
         onPointerDownCapture={() => {
           if (kind === 'book' && book && currentBook?.id !== book.id) setCurrentBook(book);
         }}
       >
-        {splitActive && renderTopBar(slot, kind, book)}
+        {isSplit && renderTopBar(slot, kind, book)}
         <div className="split-pane-body">
           {kind === 'book' ? (
             <Reader
               bookData={book}
               onBack={() => onClosePane(slot)}
               onOpenBook={onOpenBook}
-              inSplitView={splitActive}
-              onSplitScreen={splitActive ? () => onMaximizePane(slot) : onRequestSplit}
+              inSplitView={isSplit}
+              onSplitScreen={isSplit ? () => onMaximizePane(slot) : onAddPane}
               onProgressUpdate={onProgressUpdate}
               addToast={addToast}
             />
@@ -190,30 +244,21 @@ function SplitView({
   };
 
   return (
-    <div
-      className={[
-        'split-view-container',
-        splitActive ? 'is-split' : '',
-        swapped ? 'is-swapped' : '',
-      ].filter(Boolean).join(' ')}
-    >
-      {renderPane('A')}
-
-      {splitActive && (
-        <div
-          key="resizer"
-          className="split-resizer"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            isDragging.current = true;
-            document.body.style.cursor = 'col-resize';
-          }}
-        >
-          <div className="split-resizer-handle" />
-        </div>
-      )}
-
-      {renderPane('B')}
+    <div className={['split-view-container', isSplit ? 'is-split' : ''].filter(Boolean).join(' ')}>
+      {activeSlots.map((slot, i) => (
+        <React.Fragment key={slot}>
+          {renderPane(slot, i)}
+          {i < activeSlots.length - 1 && (
+            <div
+              key={`resizer-${i}`}
+              className="split-resizer"
+              onMouseDown={(e) => handleResizerMouseDown(e, i, i + 1)}
+            >
+              <div className="split-resizer-handle" />
+            </div>
+          )}
+        </React.Fragment>
+      ))}
     </div>
   );
 }
