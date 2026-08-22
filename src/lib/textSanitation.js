@@ -17,7 +17,7 @@ const ABBREVIATIONS = {
   'e\\.g\\.': 'for example',
   'St\\.': 'Saint',
   'Vol\\.': 'Volume',
-  'No\\.': 'Number',
+  'No\\.\\s+(?=\\d)': 'Number ',
   'pp\\.': 'pages',
   'p\\.': 'page',
 };
@@ -37,15 +37,13 @@ export function setSkipJunk(enabled) {
 }
 
 /**
- * Drop boilerplate lines (page numbers, "Page X of Y", running footers, bare
- * URLs/DOIs) before the rest of the pipeline joins wrapped lines. Conservative
- * on purpose: only removes lines that are *entirely* junk so real prose is safe.
+ * Drop boilerplate lines ("Page X of Y", running footers, bare URLs/DOIs)
+ * before the rest of the pipeline joins wrapped lines. Conservative on purpose:
+ * only removes lines that are *entirely* explicit junk so real prose & chapter numbers are safe.
  */
 function stripBoilerplate(text) {
   const lines = text.split(/\r?\n/);
   const junk = [
-    /^\s*\d{1,4}\s*$/,                                   // bare page number
-    /^\s*(?=[ivxlcdm]{2,}\s*$)[ivxlcdm]+\s*$/i,          // roman-numeral page (ii, xiv)
     /^\s*page\s+\d+(\s+of\s+\d+)?\s*$/i,                 // "Page 4" / "Page 4 of 76"
     /^\s*\d+\s*[|/]\s*page\s*$/i,                         // "12 | Page"
     /^\s*(https?:\/\/\S+|www\.\S+|doi:\s*\S+)\s*$/i,      // bare URL / DOI line
@@ -97,7 +95,7 @@ export const sanitizeTextForTTS = (text) => {
     .replace(/\uFB02/g, 'fl')
     .replace(/\uFB03/g, 'ffi')
     .replace(/\uFB04/g, 'ffl')
-    .replace(/\s+/g, ' ');
+    .replace(/[ \t]+/g, ' ');
 
   // 3. Natural Pauses: Replace dashes with commas
   // Em Dash and En Dash often cause abrupt stops; commas feel more natural.
@@ -134,59 +132,82 @@ export const sanitizeTextForTTS = (text) => {
   // Prevents "E dot B dot"
   sanitized = sanitized.replace(/([A-Z])\.\s*(?=[A-Z])/g, '$1 ');
 
-  // 8. Cleanup remaining artifacts
+  // 8. Cleanup remaining artifacts (preserve newlines)
   sanitized = sanitized
     .replace(/\[\d+\]/g, '') // Remove citations [1], [2]
-    .replace(/\s+/g, ' ')    // Collapse whitespace one last time
+    .replace(/[ \t]+/g, ' ')  // Collapse horizontal whitespace
+    .replace(/\n{3,}/g, '\n\n') // Max double newline for paragraphs
     .trim();
 
   return sanitized;
 };
 
 /**
- * Splits text into high-quality sentence chunks for TTS.
- * Now with sharding for longer sentences to ensure fast backend generation.
+ * Splits text into high-quality sentence chunks for TTS, respecting paragraph breaks.
+ * Uses a robust split strategy that preserves all words including those starting
+ * with smart/curly quotes, numbers, and special characters.
  */
 export const splitIntoSentenceChunks = (text) => {
   if (!text) return [];
-  
-  // 1. Initial split by major sentence endings (. ! ?)
-  const initialChunks = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g);
-  if (!initialChunks) return [text.trim()].filter(t => t.length > 0);
 
+  // 1. Split by explicit paragraph breaks (\n\n) first — never merge across paragraphs
+  const paragraphs = text.split(/\r?\n\r?\n+/);
   const finalChunks = [];
-  initialChunks.forEach(chunk => {
-    const trimmed = chunk.trim();
-    if (!trimmed) return;
 
-    // 2. If chunk is very long (> 450 chars), sub-split it at natural pauses (comma, etc.)
-    // This prevents any single chunk from taking too long to generate.
-    if (trimmed.length > 450) {
-      // Split at , ; : or -- but keep the delimiter attached to the previous chunk
-      const subChunks = trimmed.split(/(?<=[,;:—])\s+/);
-      subChunks.forEach(s => {
-        const sTrim = s.trim();
-        if (sTrim.length > 0) finalChunks.push(sTrim);
-      });
-    } else {
-      finalChunks.push(trimmed);
+  paragraphs.forEach(paragraph => {
+    const pTrim = paragraph.trim();
+    if (!pTrim) return;
+
+    // 2. Split on sentence-ending punctuation followed by whitespace/end.
+    //    Use a simple approach: find positions after [.!?] + optional trailing quote/bracket
+    //    that are followed by whitespace or end-of-string, then slice.
+    const sentences = [];
+    let start = 0;
+    const re = /[.!?]+['"'"')\]}]*(?=\s|$)/g;
+    let m;
+    while ((m = re.exec(pTrim)) !== null) {
+      const end = m.index + m[0].length;
+      const chunk = pTrim.slice(start, end).trim();
+      if (chunk.length > 0) sentences.push(chunk);
+      start = end;
+    }
+    // Capture any trailing text that had no sentence-ending punctuation
+    if (start < pTrim.length) {
+      const tail = pTrim.slice(start).trim();
+      if (tail.length > 0) sentences.push(tail);
+    }
+    // Fallback: if regex found nothing, treat whole paragraph as one sentence
+    if (sentences.length === 0 && pTrim.length > 0) {
+      sentences.push(pTrim);
+    }
+
+    // 3. Sub-split sentences that are very long (> 450 chars) at natural pauses
+    const pFinalChunks = [];
+    for (const s of sentences) {
+      if (s.length > 450) {
+        const subChunks = s.split(/(?<=[,;:—])\s+/);
+        for (const sub of subChunks) {
+          const sTrim = sub.trim();
+          if (sTrim.length > 0) pFinalChunks.push(sTrim);
+        }
+      } else {
+        if (s.length > 0) pFinalChunks.push(s);
+      }
+    }
+
+    // 4. Smart Merge within paragraph: join short sentences until ~60 chars
+    //    Never merge across paragraph boundaries.
+    const TARGET_MIN_CHARS = 60;
+    let buffer = '';
+    for (let i = 0; i < pFinalChunks.length; i++) {
+      buffer = buffer ? buffer + ' ' + pFinalChunks[i] : pFinalChunks[i];
+      const isLast = i === pFinalChunks.length - 1;
+      if (buffer.length >= TARGET_MIN_CHARS || isLast) {
+        if (buffer.trim().length > 0) finalChunks.push(buffer.trim());
+        buffer = '';
+      }
     }
   });
 
-  // 3. Smart Merge: join chunks until each is at least ~120 chars so that
-  // short sentences don't cause audible gaps between chunks during playback.
-  const TARGET_MIN_CHARS = 120;
-  const optimized = [];
-  let buffer = '';
-  for (let i = 0; i < finalChunks.length; i++) {
-    buffer = buffer ? buffer + ' ' + finalChunks[i] : finalChunks[i];
-    const isLast = i === finalChunks.length - 1;
-    // Flush buffer when it's long enough OR we've hit the last chunk
-    if (buffer.length >= TARGET_MIN_CHARS || isLast) {
-      optimized.push(buffer);
-      buffer = '';
-    }
-  }
-
-  return optimized.filter(c => c.length > 1);
+  return finalChunks.filter(c => c.length > 0);
 };

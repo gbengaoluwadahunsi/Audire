@@ -315,9 +315,8 @@ class TTSManager {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;
 
       const chunk = textChunks[currentIndex]?.trim();
-      // Relaxed ghost check: skip only if there are NO alphanumeric characters at all.
-      // This ensures sentences starting with numbers (e.g. "1. Start") are NOT skipped.
-      const isGhost = !chunk || chunk.length < 1 || !/[a-zA-ZÀ-ÿ0-9]/.test(chunk);
+      // Skip only if chunk is completely empty or whitespace.
+      const isGhost = !chunk || chunk.length === 0;
 
       if (isGhost) {
         currentIndex++;
@@ -337,17 +336,9 @@ class TTSManager {
       }
 
       if (!blob || blob.size < 100) {
-        this._failureCount++;
-        if (this._failureCount >= 3) {
-          console.error('[TTS] Custom voice unreachable, stopping.');
-          // Flag it so the reader can tell this apart from reaching the end of the
-          // page — otherwise it reads the abort as "finished" and turns the page.
-          this._abortedOnFailure = true;
-          return;
-        }
-        this._blobCache.delete(currentIndex);
-        currentIndex++;
-        return runLoop();
+        console.error('[TTS] Voice service unreachable for chunk', currentIndex);
+        this._abortedOnFailure = true;
+        return;
       }
 
       let audioBuffer;
@@ -355,10 +346,9 @@ class TTSManager {
         const ab = await blob.arrayBuffer();
         audioBuffer = await ctx.decodeAudioData(ab);
       } catch (err) {
-        console.warn('[TTS] Decode failed for chunk', currentIndex);
-        this._blobCache.delete(currentIndex);
-        currentIndex++;
-        return runLoop();
+        console.error('[TTS] Audio decode failed for chunk', currentIndex, err);
+        this._abortedOnFailure = true;
+        return;
       }
 
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return;

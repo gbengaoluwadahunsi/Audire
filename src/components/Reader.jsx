@@ -818,7 +818,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           while (sessionId === playbackSessionRef.current && epubSkipped < MAX_EMPTY_SECTIONS) {
             console.log('Reader: Extracting text from', currentHref);
             text = await extractTextFromSection(book, currentHref);
-            text = (text || '').replace(/\s+/g, ' ').trim();
+            text = (text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
             // Try OCR on EPUB section if text is short/empty or image-based figure
             if (text.length <= 15 && bookRef.current) {
@@ -864,7 +864,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
             const from = playbackPdfPage + pdfPageOffset;
             console.log('Reader: Extracting PDF page', from, '(logical page:', playbackPdfPage, ', offset:', pdfPageOffset, ')');
             text = await extractTextFromPdfDoc(pdfRef.current, from);
-            let clean = (text || '').replace(/\s+/g, ' ').trim();
+            let clean = (text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
             // If embedded text is missing or sparse/short (e.g. caption only or scanned figure), run OCR to capture figure writings & diagrams
             if (clean.length < 150) {
@@ -875,7 +875,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
                 }
                 console.log('Reader: Sparse text on page', from, '(len:', clean.length, '), trying OCR...');
                 const ocrText = await ocrPdfPage(pdfRef.current, from);
-                const cleanOcr = (ocrText || '').replace(/\s+/g, ' ').trim();
+                const cleanOcr = (ocrText || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
                 if (cleanOcr.length > 2) {
                   clean = mergeOcrText(clean, cleanOcr);
                   addToast?.('Extracted figure/image text via OCR!', 'success');

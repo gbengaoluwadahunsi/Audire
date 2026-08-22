@@ -190,8 +190,8 @@ export const extractPdfPageText = async (pdfSource, pageNum) => {
 };
 
 const filterTextContent = (textContent, height) => {
-    const headerThreshold = height * 0.95;
-    const footerThreshold = height * 0.05;
+    const headerThreshold = height * 0.98;
+    const footerThreshold = height * 0.02;
     const filtered = textContent.items.filter(item => {
         if (!item.transform) return true;
         const y = item.transform[5];
