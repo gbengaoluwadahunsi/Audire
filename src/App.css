@@ -20,9 +20,9 @@
 .landing-gradient {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139, 92, 246, 0.15), transparent),
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(13, 148, 136, 0.15), transparent),
     radial-gradient(ellipse 60% 40% at 100% 50%, rgba(236, 72, 153, 0.08), transparent),
-    radial-gradient(ellipse 50% 30% at 0% 80%, rgba(139, 92, 246, 0.06), transparent);
+    radial-gradient(ellipse 50% 30% at 0% 80%, rgba(13, 148, 136, 0.06), transparent);
 }
 
 .landing-mesh {
@@ -2997,7 +2997,7 @@
 }
 
 .pdf-text-layer ::selection {
-  background: rgba(139, 92, 246, 0.3);
+  background: rgba(13, 148, 136, 0.3);
 }
 
 .nav-btn {
@@ -3022,11 +3022,11 @@
 }
 
 .nav-btn:hover {
-  background: rgba(139, 92, 246, 0.6);
+  background: rgba(13, 148, 136, 0.6);
   color: var(--on-primary);
   opacity: 1;
   transform: translateY(-50%) scale(1.1);
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 20px rgba(13, 148, 136, 0.4);
 }
 
 .nav-btn.prev { left: 20px; }
@@ -4149,8 +4149,8 @@
 }
 
 .stats-goal-card.reached {
-  border-color: rgba(139, 92, 246, 0.4);
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), var(--bg-card));
+  border-color: rgba(13, 148, 136, 0.4);
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.06), var(--bg-card));
 }
 
 .stats-goal-ring {
@@ -4311,7 +4311,7 @@
 /* ── Today bar highlight in chart ── */
 .stats-chart-bar.today {
   background: linear-gradient(180deg, var(--primary-light), var(--primary-dark));
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 12px rgba(13, 148, 136, 0.4);
 }
 
 /* ── Reader highlight actions ── */
@@ -4343,7 +4343,7 @@
 }
 
 .reader-highlight-actions .share {
-  background: rgba(139, 92, 246, 0.1);
+  background: rgba(13, 148, 136, 0.1);
   color: var(--primary-light);
   border-radius: 6px;
   padding: 5px;
