@@ -5289,58 +5289,6 @@
   }
 }
 
-/* ─── Voice status badge (reader + mini player) ─────────────────────────── */
-.voice-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-.voice-status--compact {
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 0.7rem;
-}
-.voice-status-dot {
-  width: 6px;
-  height: 6px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--success);
-}
-.voice-status--backup { border-color: var(--warning); }
-.voice-status--backup .voice-status-dot { background: var(--warning); }
-.voice-status-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.voice-status-tag {
-  margin-right: 4px;
-  color: var(--warning);
-  font-weight: 600;
-}
-.voice-status-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 999px;
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  font-size: inherit;
-  cursor: pointer;
-}
-.voice-status-retry:hover { background: var(--bg-hover); }
-.voice-status-retry:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-
 /* ─── Voice settings ───────────────────────────────────────────────────── */
 .voice-engine-list {
   display: flex;
@@ -5391,8 +5339,6 @@
   font-weight: 600;
 }
 .voice-engine-badge--ok { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
-.voice-engine-badge--warn { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
-.voice-engine-badge--busy { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary-light); }
 .voice-engine-badge--off { background: var(--surface-hover); color: var(--text-tertiary); }
 .voice-engine-order {
   display: flex;
@@ -5425,13 +5371,6 @@
   gap: 6px;
   margin-top: 0;
 }
-.voice-engine-download {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 10px;
-}
-.voice-engine-download .dashboard-progress-bar { flex: 1; }
 .voice-engine-error {
   margin: 8px 0 0;
   color: var(--error);

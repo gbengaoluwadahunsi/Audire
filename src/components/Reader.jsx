@@ -26,7 +26,6 @@ import {
   clearEpubTtsHighlight,
   applyTtsWordHighlight,
 } from '../lib/ttsHighlight';
-import VoiceStatus from './VoiceStatus';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
 import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
@@ -1715,7 +1714,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
               /> Cont.
             </label>
           </div>
-          <VoiceStatus active={isPlayingTTS} />
         </div>
       </div>
 

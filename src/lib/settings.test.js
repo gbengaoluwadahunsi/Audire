@@ -13,9 +13,8 @@ const saveRaw = (obj) => store.set('audire-settings', JSON.stringify(obj));
 beforeEach(() => store.clear());
 
 describe('getSettings', () => {
-  it('defaults to Edge → Kokoro → device voices', () => {
-    expect(getSettings().engineOrder).toEqual(DEFAULT_ENGINE_ORDER);
-    expect(getSettings().kokoroVoice).toBe('af_heart');
+  it('defaults to Edge → device voices', () => {
+    expect(getSettings().engineOrder).toEqual(['edge-tts', 'web-speech']);
   });
 
   it('keeps the voice chosen in the mini player (old `voice` key)', () => {
@@ -25,11 +24,12 @@ describe('getSettings', () => {
     expect(s.voice).toBeUndefined();
   });
 
-  it('turns an old single-engine choice into an engine order', () => {
-    saveRaw({ ttsEngine: 'kokoro', kokoroVoice: 'bf_emma' });
+  it('drops the removed Kokoro engine and its settings', () => {
+    saveRaw({ ttsEngine: 'kokoro', engineOrder: ['kokoro', 'web-speech', 'edge-tts'], kokoroVoice: 'bf_emma', kokoroAutoDownload: true });
     const s = getSettings();
-    expect(s.engineOrder[0]).toBe('kokoro');
-    expect(s.kokoroVoice).toBe('bf_emma');
+    expect(s.engineOrder).toEqual(['web-speech', 'edge-tts']);
+    expect(s.kokoroVoice).toBeUndefined();
+    expect(s.kokoroAutoDownload).toBeUndefined();
     expect(s.ttsEngine).toBeUndefined();
   });
 
@@ -41,7 +41,7 @@ describe('getSettings', () => {
 
 describe('normalizeEngineOrder', () => {
   it('drops unknown and duplicate engines and adds missing ones', () => {
-    expect(normalizeEngineOrder(['web-speech', 'nope', 'web-speech'])).toEqual(['web-speech', 'edge-tts', 'kokoro']);
+    expect(normalizeEngineOrder(['web-speech', 'nope', 'web-speech'])).toEqual(['web-speech', 'edge-tts']);
     expect(normalizeEngineOrder(undefined)).toEqual(DEFAULT_ENGINE_ORDER);
   });
 });

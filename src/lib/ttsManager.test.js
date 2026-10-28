@@ -10,15 +10,6 @@ vi.mock('./ttsCache', () => ({
   putCachedAudio: async () => {},
 }));
 
-vi.mock('./voices/kokoroEngine', () => ({
-  KOKORO_VOICES: [{ id: 'af_heart', name: 'Heart (US Female)' }],
-  downloadKokoro: vi.fn(async () => {}),
-  getKokoroStatus: () => ({ status: 'not-downloaded', reason: '' }),
-  isKokoroReady: () => false,
-  refreshKokoroStatus: async () => ({ status: 'not-downloaded' }),
-  synthesizeKokoro: async () => { throw new Error('not downloaded'); },
-}));
-
 vi.mock('./voices/webSpeechEngine', () => ({
   cancelWebSpeech: () => {},
   getWebSpeechVoices: async () => deviceVoices,
@@ -135,7 +126,7 @@ describe('engine chain', () => {
   it('honours a custom engine order', async () => {
     mockEdge(new Set());
     const manager = new TTSManager();
-    manager.applySettings({ engineOrder: ['web-speech', 'edge-tts', 'kokoro'] });
+    manager.applySettings({ engineOrder: ['web-speech', 'edge-tts'] });
     const started = await readPage(manager);
     expect(started).toEqual(CHUNKS);
     expect(spokenByDevice).toEqual(CHUNKS);

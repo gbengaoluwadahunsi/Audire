@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap, Settings as SettingsIcon, Moon, Mic, Music } from 'lucide-react';
 import { usePlayback } from '../context/PlaybackContext';
 import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
-import VoiceStatus from './VoiceStatus';
 
 
 export default function MiniPlayer({ onOpenBook }) {
@@ -83,7 +82,6 @@ export default function MiniPlayer({ onOpenBook }) {
         <div className="dashboard-player-details">
           <h4>{currentBook.title}</h4>
           <p>{currentBook.author || 'Unknown'}</p>
-          <VoiceStatus active={isPlaying} compact />
         </div>
       </div>
       <div className="dashboard-player-controls">

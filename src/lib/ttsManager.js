@@ -1,4 +1,4 @@
-// TTS Manager: an ordered chain of voice engines (Edge → Kokoro → device voices by default).
+// TTS Manager: an ordered chain of voice engines (Edge → device voices by default).
 // Every sentence is tried on the page's current engine; if that engine fails or is too slow,
 // the same sentence moves to the next engine so nothing is skipped.
 import { cacheKey, getCachedAudio, putCachedAudio } from './ttsCache';
@@ -6,18 +6,9 @@ import {
   DEFAULT_ENGINE_ORDER,
   ENGINE_EDGE,
   ENGINE_INFO,
-  ENGINE_KOKORO,
   ENGINE_WEB_SPEECH,
   normalizeEngineOrder,
 } from './voices/engines';
-import {
-  downloadKokoro,
-  getKokoroStatus,
-  isKokoroReady,
-  KOKORO_VOICES,
-  refreshKokoroStatus,
-  synthesizeKokoro,
-} from './voices/kokoroEngine';
 import {
   cancelWebSpeech,
   getWebSpeechVoices,
@@ -132,25 +123,6 @@ async function _fetchEdgeTTS(text, voice = 'en-US-AvaMultilingualNeural', rate =
   return null;
 }
 
-/** On-device Kokoro synthesis, sharing the offline audio cache with Edge. */
-async function _fetchKokoro(text, voice, rate) {
-  const trimmed = (text || '').trim();
-  if (!trimmed) return null;
-  const key = cacheKey(trimmed, `kokoro:${voice}`, rate, 0);
-  const cached = await getCachedAudio(key);
-  if (cached) return { blob: cached, words: null };
-  try {
-    const blob = await synthesizeKokoro(trimmed, voice, rate);
-    if (blob && blob.size > 100) {
-      putCachedAudio(key, blob);
-      return { blob, words: null };
-    }
-  } catch (err) {
-    console.warn('[TTS] Kokoro synthesis failed:', err?.message);
-  }
-  return null;
-}
-
 /** Resolve with the promise's value, or null if it takes longer than `ms`. */
 export function withBudget(promise, ms) {
   let timer;
@@ -176,9 +148,7 @@ export class TTSManager {
     this.pitch = 0;
     this.volume = 1.0;
     this.edgeTtsVoice = 'en-US-AvaMultilingualNeural';
-    this.kokoroVoice = 'af_heart';
     this.webSpeechVoice = '';
-    this.kokoroAutoDownload = false;
     this.wantWordTimings = false;
     /** Called with (chunkIndex, { offset, text }) as each word starts, when timings exist. */
     this.onWordBoundary = null;
@@ -202,7 +172,6 @@ export class TTSManager {
 
     if (typeof window !== 'undefined') {
       getWebSpeechVoices().then((v) => { this._webVoices = v; }).catch(() => {});
-      refreshKokoroStatus().catch(() => {});
     }
   }
 
@@ -234,9 +203,6 @@ export class TTSManager {
     if (engine === ENGINE_EDGE) {
       return EDGE_TTS_VOICES.find((v) => v.id === this.edgeTtsVoice)?.name.split(' (')[0] || this.edgeTtsVoice;
     }
-    if (engine === ENGINE_KOKORO) {
-      return KOKORO_VOICES.find((v) => v.id === this.kokoroVoice)?.name.split(' (')[0] || this.kokoroVoice;
-    }
     return this._resolveWebVoice()?.name || 'Default voice';
   }
 
@@ -246,7 +212,6 @@ export class TTSManager {
 
   isEngineAvailable(engine) {
     if (engine === ENGINE_EDGE) return true;
-    if (engine === ENGINE_KOKORO) return isKokoroReady();
     if (engine === ENGINE_WEB_SPEECH) return isWebSpeechSupported() && this._webVoices.length > 0;
     return false;
   }
@@ -274,19 +239,6 @@ export class TTSManager {
     };
     this.engine = engine;
     if (changed || notice) this._dispatch('audire-tts-status', { ...this.status, notice });
-  }
-
-  /** Ask for the first-choice engine again from the next sentence ("retry preferred voice"). */
-  retryPreferred() {
-    _edgeBackendUnavailableUntil = 0;
-    const idx = this._firstAvailableIdx(0);
-    if (idx >= 0) this._pageEngineIdx = idx;
-  }
-
-  _maybeStartKokoroDownload() {
-    if (!this.kokoroAutoDownload || !this.engineOrder.includes(ENGINE_KOKORO)) return;
-    if (getKokoroStatus().status !== 'not-downloaded') return;
-    downloadKokoro(this.kokoroVoice).catch(() => {});
   }
 
   // ─── Media session ───────────────────────────────────────────────────────
@@ -371,9 +323,7 @@ export class TTSManager {
       if (!ok && !this._stopped) throw new Error('This device voice could not speak');
       return null;
     }
-    const result = engine === ENGINE_KOKORO
-      ? await _fetchKokoro(clean, this.kokoroVoice, this.speed)
-      : await _fetchEdgeTTS(clean, this.edgeTtsVoice, this.speed, this.pitch);
+    const result = await _fetchEdgeTTS(clean, this.edgeTtsVoice, this.speed, this.pitch);
     if (!result?.blob || result.blob.size < 100) {
       throw new Error(`${ENGINE_INFO[engine]?.label || 'Voice'} is not available right now`);
     }
@@ -404,7 +354,7 @@ export class TTSManager {
   }
 
   _isBlobEngine(engine) {
-    return engine === ENGINE_EDGE || engine === ENGINE_KOKORO;
+    return engine === ENGINE_EDGE;
   }
 
   _getBlobForChunk(textChunks, index, sessionId, engine = ENGINE_EDGE) {
@@ -415,8 +365,7 @@ export class TTSManager {
     // null counted as a synthesis failure even though the backend handles them fine.
     if (!chunk || !/[a-zA-ZÀ-ÿ0-9]/.test(chunk)) return null;
 
-    const voice = engine === ENGINE_KOKORO ? this.kokoroVoice : this.edgeTtsVoice;
-    const key = `${engine}|${chunk}|${voice}|${this.speed}|${this.pitch}|${this.wantWordTimings}`;
+    const key = `${engine}|${chunk}|${this.edgeTtsVoice}|${this.speed}|${this.pitch}|${this.wantWordTimings}`;
     const slot = `${index}|${engine}`;
     const cached = this._blobCache.get(slot);
     if (cached?.key === key) return cached.promise;
@@ -424,9 +373,7 @@ export class TTSManager {
     let entry;
     const promise = (async () => {
       if (this._stopped || (sessionId && this.currentSessionId !== sessionId)) return null;
-      return engine === ENGINE_KOKORO
-        ? _fetchKokoro(chunk, this.kokoroVoice, this.speed)
-        : _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed, this.pitch, { withWords: this.wantWordTimings });
+      return _fetchEdgeTTS(chunk, this.edgeTtsVoice, this.speed, this.pitch, { withWords: this.wantWordTimings });
     })().then((result) => {
       // Never memoise a failure. Prefetch runs three chunks ahead, so a momentary
       // backend hiccup used to poison all three and they would stay silent for the
@@ -554,7 +501,6 @@ export class TTSManager {
     }
 
     if (!this._webVoices.length) this._webVoices = await getWebSpeechVoices().catch(() => []);
-    if (getKokoroStatus().status === 'unknown') await refreshKokoroStatus().catch(() => {});
 
     const ctx = this._getAudioCtx();
     if (ctx.state === 'suspended') await ctx.resume().catch(() => { });
@@ -614,7 +560,6 @@ export class TTSManager {
           this._setStatus(engine, goingBack
             ? { notice: 'restored' }
             : { reason: `${ENGINE_INFO[from]?.label || 'The voice'} did not respond`, notice: 'switched' });
-          if (from === ENGINE_EDGE && !goingBack) this._maybeStartKokoroDownload();
         }
 
         if (engine === ENGINE_WEB_SPEECH) {
@@ -743,9 +688,7 @@ export class TTSManager {
   applySettings(s = {}) {
     if (s.engineOrder) this.engineOrder = normalizeEngineOrder(s.engineOrder);
     if (s.edgeTtsVoice) this.edgeTtsVoice = s.edgeTtsVoice;
-    if (s.kokoroVoice) this.kokoroVoice = s.kokoroVoice;
     if (s.webSpeechVoice !== undefined) this.webSpeechVoice = s.webSpeechVoice;
-    if (s.kokoroAutoDownload !== undefined) this.kokoroAutoDownload = !!s.kokoroAutoDownload;
     if (s.karaokeHighlight !== undefined) this.wantWordTimings = !!s.karaokeHighlight;
     if (typeof s.speed === 'number') this.speed = s.speed;
   }

@@ -9,8 +9,7 @@
 ## Highlights
 
 - **Podcast-quality TTS** — Read any book aloud with natural neural voices. Gapless playback across pages.
-- **Three voice engines, never silent** — Online neural voices (Edge) first, then on-device Kokoro voices, then your device's built-in voices. If one stops responding, the same sentence carries on with the next, and the player shows which voice is reading. Order and voices are configurable in Settings.
-- **Offline voices** — Kokoro is a free open-source voice model that runs in your browser after a one-time ~115 MB download, so you can listen with no connection.
+- **Two voice engines, never silent** — Online neural voices (Edge) first, then your device's built-in voices. If Edge stops responding, the same sentence carries on with the device voice. Order and voices are configurable in Settings.
 - **Word-by-word highlighting** — Optional: the sentence being read and each spoken word are highlighted in the page.
 - **Seamless page controls** — While TTS is active, `next/prev` jumps and continues reading from the newly selected page.
 - **EPUB & PDF** — Upload and read your library. EPUB is read natively and PDF is supported directly.
@@ -26,7 +25,7 @@
 |-------|-----------|
 | Frontend | React 19, Vite 7, CSS |
 | Backend | Node.js, Express, PostgreSQL ([Neon](https://neon.tech)) |
-| TTS | Edge TTS (online neural) → Kokoro via `kokoro-js` (in-browser) → Web Speech API (built-in) |
+| TTS | Edge TTS (online neural) → Web Speech API (built-in) |
 | EPUB→PDF | Calibre `ebook-convert` (optional fallback utility) |
 | OCR | Tesseract.js |
 | AI | Groq API |
@@ -133,7 +132,7 @@ Output goes to `dist/`. Deploy the frontend to Vercel, Netlify, or any static ho
 - Recommended default distribution model: open-source + self-hosting.
 - For multi-user or commercial deployment, add authentication, restrictive CORS, and rate limiting before launch.
 - `GROQ_API_KEY` is optional — without it, AI features are disabled but reading and TTS work fine.
-- If the Edge TTS backend is unavailable, reading continues with Kokoro (if downloaded) or the device's built-in voices.
+- If the Edge TTS backend is unavailable, reading continues with the device's built-in voices.
 - Edge TTS uses Microsoft's unofficial read-aloud service, which changes without notice. A daily GitHub Action (`.github/workflows/voice-check.yml`) checks it still works.
 
 ## Free Tier Note
