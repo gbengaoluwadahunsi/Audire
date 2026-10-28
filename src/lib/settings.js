@@ -1,9 +1,13 @@
+import { DEFAULT_ENGINE_ORDER, ENGINE_EDGE, ENGINE_KOKORO, normalizeEngineOrder } from './voices/engines';
+
 const STORAGE_KEY = 'audire-settings';
 
 const DEFAULTS = {
-  ttsEngine: 'edge-tts',
-  ttsVoice: '',
+  engineOrder: DEFAULT_ENGINE_ORDER, // First choice first; the rest are backups in order
   edgeTtsVoice: 'en-US-AvaMultilingualNeural',
+  kokoroVoice: 'af_heart',
+  webSpeechVoice: '', // voiceURI; empty = the device's default English voice
+  kokoroAutoDownload: false, // Let playback start the on-device voice download in the background
   speed: 1.0,
   fontSize: 15,
   fontFamily: 'System',
@@ -24,14 +28,19 @@ export function getSettings() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     const merged = stored ? { ...DEFAULTS, ...JSON.parse(stored) } : { ...DEFAULTS };
-    // Migrate old setting keys from Kokoro era
-    if (merged.kokoroVoice && !merged.edgeTtsVoice) {
-      merged.edgeTtsVoice = merged.kokoroVoice;
+    // Older versions stored a single engine and, from the mini player, an Edge voice
+    // under `voice`. Fold both into the current keys.
+    if (merged.ttsEngine && !stored?.includes('"engineOrder"')) {
+      const first = merged.ttsEngine === ENGINE_KOKORO ? ENGINE_KOKORO : ENGINE_EDGE;
+      merged.engineOrder = [first, ...DEFAULT_ENGINE_ORDER.filter((e) => e !== first)];
     }
-    if (merged.ttsEngine === 'kokoro') {
-      merged.ttsEngine = 'edge-tts';
+    if (typeof merged.voice === 'string' && merged.voice.includes('Neural')) {
+      merged.edgeTtsVoice = merged.voice;
     }
-    delete merged.kokoroVoice;
+    delete merged.ttsEngine;
+    delete merged.ttsVoice;
+    delete merged.voice;
+    merged.engineOrder = normalizeEngineOrder(merged.engineOrder);
     return merged;
   } catch {
     // Ignore malformed local settings and fall back to defaults.

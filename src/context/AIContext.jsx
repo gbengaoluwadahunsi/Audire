@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import * as api from '../lib/api.js';
 
 const AIContext = createContext(null);
@@ -26,12 +26,12 @@ export function AIProvider({ children }) {
     };
   }, []);
 
-  const explain = useCallback(wrap('aiExplain'), [wrap]);
-  const define = useCallback(wrap('aiDefine'), [wrap]);
-  const summarize = useCallback(wrap('aiSummarize'), [wrap]);
-  const generateFlashcards = useCallback(wrap('aiFlashcards'), [wrap]);
-  const ask = useCallback(wrap('aiAsk'), [wrap]);
-  const catchup = useCallback(wrap('aiCatchup'), [wrap]);
+  const explain = useMemo(() => wrap('aiExplain'), [wrap]);
+  const define = useMemo(() => wrap('aiDefine'), [wrap]);
+  const summarize = useMemo(() => wrap('aiSummarize'), [wrap]);
+  const generateFlashcards = useMemo(() => wrap('aiFlashcards'), [wrap]);
+  const ask = useMemo(() => wrap('aiAsk'), [wrap]);
+  const catchup = useMemo(() => wrap('aiCatchup'), [wrap]);
 
   return (
     <AIContext.Provider value={{
@@ -52,6 +52,8 @@ export function AIProvider({ children }) {
   );
 }
 
+// Provider + hook in one file is intentional; only the hook is consumed elsewhere.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAI() {
   const ctx = useContext(AIContext);
   if (!ctx) throw new Error('useAI must be used within AIProvider');

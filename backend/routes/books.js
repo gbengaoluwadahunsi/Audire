@@ -299,7 +299,7 @@ router.post('/', upload.single('file'), async (req, res) => {
             coverBuffer
           ]
         );
-      } catch (insertErr) {
+      } catch {
         // Fallback for older schemas without binary columns
         await query(
           `INSERT INTO books (id, title, author, cover, file_url, format, file_hash, added_at)
@@ -516,7 +516,7 @@ router.patch('/:id/progress', async (req, res) => {
          WHERE id = $1`,
         [req.params.id, last_cfi ?? null, progress_percent ?? null, total_pages ?? null]
       );
-    } catch (dbErr) {
+    } catch {
       // Silently ignore DB errors when offline — progress is also tracked in-memory on the frontend
     }
     res.json({ ok: true });

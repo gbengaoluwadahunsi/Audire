@@ -1,14 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap, Settings as SettingsIcon, Moon, Mic, Music } from 'lucide-react';
 import { usePlayback } from '../context/PlaybackContext';
+import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
+import VoiceStatus from './VoiceStatus';
 
-const EDGE_VOICES = [
-  { id: 'en-US-AvaMultilingualNeural', label: 'Ava (US Female)' },
-  { id: 'en-US-AndrewMultilingualNeural', label: 'Andrew (US Male)' },
-  { id: 'en-GB-SoniaNeural', label: 'Sonia (UK Female)' },
-  { id: 'en-GB-RyanNeural', label: 'Ryan (UK Male)' },
-  { id: 'en-AU-NatashaNeural', label: 'Natasha (AU Female)' },
-];
 
 export default function MiniPlayer({ onOpenBook }) {
   const { 
@@ -88,6 +83,7 @@ export default function MiniPlayer({ onOpenBook }) {
         <div className="dashboard-player-details">
           <h4>{currentBook.title}</h4>
           <p>{currentBook.author || 'Unknown'}</p>
+          <VoiceStatus active={isPlaying} compact />
         </div>
       </div>
       <div className="dashboard-player-controls">
@@ -184,20 +180,20 @@ export default function MiniPlayer({ onOpenBook }) {
           }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                <Mic size={14} /> Voice
+                <Mic size={14} /> Online voice
               </div>
               <select 
                 value={voice} 
                 onChange={(e) => setVoice(e.target.value)}
-                style={{ width: '100%', padding: '6px', borderRadius: '4px', background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
               >
-                {EDGE_VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+                {EDGE_TTS_VOICES.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
             </div>
 
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                <Music size={14} /> Pitch ({pitch > 0 ? '+' : ''}{pitch}Hz)
+                <Music size={14} /> Pitch ({pitch > 0 ? '+' : ''}{pitch}Hz, not used by on-device voices)
               </div>
               <input
                 type="range"
@@ -219,7 +215,7 @@ export default function MiniPlayer({ onOpenBook }) {
                   <button
                     key={mins}
                     onClick={() => { startSleepTimer(mins); setShowSettings(false); }}
-                    style={{ padding: '4px 8px', fontSize: '0.8rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer' }}
+                    style={{ padding: '4px 8px', fontSize: '0.8rem', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer' }}
                   >
                     {mins}m
                   </button>

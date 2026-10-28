@@ -35,7 +35,7 @@ async function syncToR2() {
       const filePath = path.join(BOOKS_DIR, file);
 
       try {
-        const url = await uploadToR2(filePath, key, mime);
+        await uploadToR2(filePath, key, mime);
         bookSuccess++;
         console.log(`  [${bookSuccess + bookSkipped}/${bookFiles.length}] ✅ ${file}`);
       } catch (err) {

@@ -28,7 +28,6 @@ import { getSettings } from './lib/settings';
 import './App.css';
 
 const API_BASE = (import.meta.env.VITE_API_URL || '').trim();
-const PING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 function App() {
   const [view, setView] = useState('landing');
@@ -38,13 +37,12 @@ function App() {
     document.documentElement.classList.toggle('light', settings.theme === 'light');
   }, []);
 
+  // Wake the backend once on load so it is warm by the time the reader presses play.
+  // (A repeating ping from every open tab only cost requests; it can't keep a free
+  // server awake once tabs close, and the player now says when it is waking up.)
   useEffect(() => {
     if (!API_BASE) return;
-    const healthUrl = `${API_BASE.replace(/\/$/, '')}/api/health`;
-    const ping = () => setTimeout(() => fetch(healthUrl).catch(() => {}), 0);
-    ping();
-    const id = setInterval(ping, PING_INTERVAL_MS);
-    return () => clearInterval(id);
+    fetch(`${API_BASE.replace(/\/$/, '')}/api/health`).catch(() => {});
   }, []);
 
   useEffect(() => {

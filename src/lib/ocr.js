@@ -96,7 +96,9 @@ export async function ocrEpubSection(book, href) {
           const text = await ocrImageUrl(url);
           URL.revokeObjectURL(url);
           if (text && text.trim().length > 2) ocrResults.push(text.trim());
-        } catch { }
+        } catch {
+          /* OCR of this image failed; keep going with the rest */
+        }
         continue;
       }
 

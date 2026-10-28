@@ -1,0 +1,46 @@
+name: Daily voice check
+
+# Edge read-aloud is an unofficial Microsoft service that can change without notice.
+# This runs every morning so a breakage shows up as a failed run (and an email from
+# GitHub) before readers notice.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  library:
+    name: Voice library still works
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/checkVoice.js
+      - name: Is a newer node-edge-tts out?
+        if: failure()
+        run: echo "Installed $(npm ls node-edge-tts --depth=0 | grep node-edge-tts), latest $(npm view node-edge-tts version). If they differ, update backend/package.json."
+
+  deployed:
+    name: Live backend reads aloud
+    runs-on: ubuntu-latest
+    # Set the repository variable AUDIRE_API_URL (e.g. https://audire-backend.onrender.com) to enable.
+    if: ${{ vars.AUDIRE_API_URL != '' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/checkVoice.js
+        env:
+          AUDIRE_API_URL: ${{ vars.AUDIRE_API_URL }}

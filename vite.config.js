@@ -18,8 +18,10 @@ function manualChunks(id) {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // Debug logging stays in dev; production builds drop console.log/debug but keep warn/error.
+  esbuild: mode === 'production' ? { pure: ['console.log', 'console.debug'] } : {},
   optimizeDeps: {},
   build: {
     rollupOptions: {
@@ -38,4 +40,4 @@ export default defineConfig({
     },
   },
 
-})
+}))

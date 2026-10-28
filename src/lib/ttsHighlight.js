@@ -1,9 +1,13 @@
 /**
  * Map TTS chunk strings onto the PDF text layer (or EPUB body) for visual highlighting.
  * Chunks come from sanitized text; on-screen text may differ slightly — matching is word-based + fuzzy.
+ *
+ * Where the browser supports the CSS Custom Highlight API, the current sentence and word are
+ * painted as highlight ranges without touching the DOM (no scroll jumps, exact extents).
+ * Older browsers fall back to classes/marks around the sentence only.
  */
 
-/** Off by default: fuzzy matching can highlight the wrong regions (solid yellow bars). Audio still works. */
+/** Off by default: fuzzy matching can still miss on unusual layouts. Audio always works. */
 let TTS_DOM_HIGHLIGHT_ENABLED = false;
 
 /** Enable/disable karaoke-style DOM highlighting at runtime (driven by settings). */
@@ -11,9 +15,138 @@ export function setKaraokeEnabled(enabled) {
   TTS_DOM_HIGHLIGHT_ENABLED = !!enabled;
 }
 
+const SENTENCE = 'tts-sentence';
+const WORD = 'tts-word';
+const STYLE_ID = 'audire-tts-highlight-style';
+const HIGHLIGHT_CSS = `
+::highlight(${SENTENCE}) { background-color: rgba(250, 204, 21, 0.28); }
+::highlight(${WORD}) { background-color: rgba(250, 204, 21, 0.75); color: inherit; }
+`;
+
+/** The sentence currently highlighted, so word boundaries can be placed inside it. */
+let _active = null; // { root, doc, start, end, cursor }
+
+function supportsCssHighlights(win) {
+  return !!(win && win.CSS && win.CSS.highlights && typeof win.Highlight === 'function');
+}
+
+function ensureHighlightStyle(doc) {
+  if (!doc || doc.getElementById(STYLE_ID)) return;
+  const style = doc.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = HIGHLIGHT_CSS;
+  (doc.head || doc.documentElement).appendChild(style);
+}
+
+function clearCssHighlights(win) {
+  if (!supportsCssHighlights(win)) return;
+  win.CSS.highlights.delete(SENTENCE);
+  win.CSS.highlights.delete(WORD);
+}
+
+/** Collect text nodes under root in document order */
+function collectTextNodes(root) {
+  const out = [];
+  const walk = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = node.textContent ?? '';
+      if (t.length) out.push(node);
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node.tagName || '').toLowerCase();
+      if (tag === 'script' || tag === 'style') return;
+      for (const c of node.childNodes) walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function flattenTextWithNodes(root) {
+  const nodes = collectTextNodes(root);
+  let full = '';
+  const segments = [];
+  for (const node of nodes) {
+    const t = node.textContent ?? '';
+    const start = full.length;
+    full += t;
+    segments.push({ node, start, end: full.length });
+  }
+  return { full, segments };
+}
+
+/** Build a DOM Range for character offsets [start, end) of the flattened text. */
+function rangeForOffsets(doc, segments, start, end) {
+  let startNode = null;
+  let startOffset = 0;
+  let endNode = null;
+  let endOffset = 0;
+  for (const seg of segments) {
+    if (startNode == null && seg.end > start) {
+      startNode = seg.node;
+      startOffset = start - seg.start;
+    }
+    if (seg.end >= end) {
+      endNode = seg.node;
+      endOffset = end - seg.start;
+      break;
+    }
+  }
+  if (!startNode || !endNode) return null;
+  try {
+    const range = doc.createRange();
+    range.setStart(startNode, Math.max(0, Math.min(startOffset, startNode.textContent.length)));
+    range.setEnd(endNode, Math.max(0, Math.min(endOffset, endNode.textContent.length)));
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+/** Paint the sentence with the Highlight API. */
+function paintSentence(root, doc, start, end) {
+  const win = doc.defaultView;
+  ensureHighlightStyle(doc);
+  const { segments } = flattenTextWithNodes(root);
+  const range = rangeForOffsets(doc, segments, start, end);
+  win.CSS.highlights.delete(WORD);
+  if (range) win.CSS.highlights.set(SENTENCE, new win.Highlight(range));
+  else win.CSS.highlights.delete(SENTENCE);
+  _active = { root, doc, start, end, cursor: start };
+}
+
+/** Strip leading/trailing punctuation so "slept." matches "slept". */
+export function trimWordPunctuation(word) {
+  return (word || '').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+}
+
+/**
+ * Highlight the word now being spoken. `wordText` is the word as it appears in the spoken
+ * chunk; it is searched for inside the current sentence, moving forward only, so repeated
+ * words land on the right occurrence. Words that were rewritten for speech (e.g. "Mister"
+ * for "Mr.") are simply skipped.
+ */
+export function applyTtsWordHighlight(wordText) {
+  if (!TTS_DOM_HIGHLIGHT_ENABLED || !_active || !wordText) return;
+  const { root, doc, end } = _active;
+  const win = doc?.defaultView;
+  if (!supportsCssHighlights(win) || !root?.isConnected) return;
+  const word = trimWordPunctuation(wordText);
+  if (!word) return;
+  const { full, segments } = flattenTextWithNodes(root);
+  const at = full.slice(_active.cursor, end).toLowerCase().indexOf(word.toLowerCase());
+  if (at === -1) return;
+  const start = _active.cursor + at;
+  const range = rangeForOffsets(doc, segments, start, start + word.length);
+  if (!range) return;
+  _active.cursor = start + word.length;
+  win.CSS.highlights.set(WORD, new win.Highlight(range));
+}
+
 export function buildPdfLayerTextIndex(textLayerEl) {
   if (!textLayerEl) return { full: '', map: [] };
-  const spans = Array.from(textLayerEl.querySelectorAll('span'));
+  // Leaf spans only: newer pdf.js wraps runs in "markedContent" spans, and counting
+  // those as well doubled the text and highlighted whole blocks.
+  const spans = Array.from(textLayerEl.querySelectorAll('span')).filter((el) => !el.querySelector('span'));
   let full = '';
   const map = [];
   for (const el of spans) {
@@ -26,6 +159,8 @@ export function buildPdfLayerTextIndex(textLayerEl) {
 }
 
 export function clearPdfTtsHighlight(textLayerEl) {
+  clearCssHighlights(typeof window !== 'undefined' ? window : null);
+  if (_active?.root === textLayerEl) _active = null;
   if (!textLayerEl) return;
   textLayerEl.querySelectorAll('.tts-reading').forEach((el) => {
     el.classList.remove('tts-reading');
@@ -164,7 +299,10 @@ export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrol
   if (!TTS_DOM_HIGHLIGHT_ENABLED || !textLayerEl || !chunkText) return;
   const savedTop = scrollContainerEl?.scrollTop;
   const savedLeft = scrollContainerEl?.scrollLeft;
-  const { full } = buildPdfLayerTextIndex(textLayerEl);
+  const doc = textLayerEl.ownerDocument;
+  const useCss = supportsCssHighlights(doc?.defaultView);
+  // The Highlight API path works on text nodes; the fallback works on whole spans.
+  const full = useCss ? flattenTextWithNodes(textLayerEl).full : buildPdfLayerTextIndex(textLayerEl).full;
   const from = typeof fromIndexRef?.current === 'number' ? fromIndexRef.current : 0;
   let range = findChunkRangeInTextFuzzy(full, chunkText, from);
   // Layer string order can differ slightly from extractTextFromPdf; try same chunk on raw page text then locate substring in layer.
@@ -179,6 +317,10 @@ export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrol
   }
   if (!range) return;
   if (fromIndexRef) fromIndexRef.current = range.end;
+  if (useCss) {
+    paintSentence(textLayerEl, doc, range.start, range.end);
+    return;
+  }
   highlightPdfSpansForRange(textLayerEl, range.start, range.end);
   if (scrollContainerEl != null && savedTop != null) {
     const restore = () => {
@@ -191,7 +333,7 @@ export function applyPdfTtsHighlight(textLayerEl, chunkText, fromIndexRef, scrol
 }
 
 export function highlightPdfSpansForRange(textLayerEl, start, end) {
-  clearPdfTtsHighlight(textLayerEl);
+  textLayerEl?.querySelectorAll('.tts-reading').forEach((el) => el.classList.remove('tts-reading'));
   if (!textLayerEl || start >= end) return;
   const { map } = buildPdfLayerTextIndex(textLayerEl);
   for (const { el, start: s, end: e } of map) {
@@ -199,36 +341,6 @@ export function highlightPdfSpansForRange(textLayerEl, start, end) {
     el.classList.add('tts-reading');
   }
   // No scrollIntoView — it fights manual scrolling in .pdf-viewer-content and can jump to the top.
-}
-
-/** Collect text nodes under root in document order */
-function collectTextNodes(root) {
-  const out = [];
-  const walk = (node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const t = node.textContent ?? '';
-      if (t.length) out.push(node);
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const tag = (node.tagName || '').toLowerCase();
-      if (tag === 'script' || tag === 'style') return;
-      for (const c of node.childNodes) walk(c);
-    }
-  };
-  walk(root);
-  return out;
-}
-
-function flattenTextWithNodes(root) {
-  const nodes = collectTextNodes(root);
-  let full = '';
-  const segments = [];
-  for (const node of nodes) {
-    const t = node.textContent ?? '';
-    const start = full.length;
-    full += t;
-    segments.push({ node, start, end: full.length });
-  }
-  return { full, segments };
 }
 
 function unwrapTtsMarks(root) {
@@ -290,9 +402,11 @@ function restoreDocScrollSnapshots(snaps) {
  */
 export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
   if (!TTS_DOM_HIGHLIGHT_ENABLED || !doc?.body || !chunkText) return;
-  const scrollSnaps = captureDocScrollSnapshots(doc);
   const body = doc.body;
-  unwrapTtsMarks(body);
+  const useCss = supportsCssHighlights(doc.defaultView);
+  // The Highlight API never mutates the DOM, so only the fallback needs scroll guarding.
+  const scrollSnaps = useCss ? null : captureDocScrollSnapshots(doc);
+  if (!useCss) unwrapTtsMarks(body);
   const { full, segments } = flattenTextWithNodes(body);
   const from = typeof fromIndexRef?.current === 'number' ? fromIndexRef.current : 0;
   const rangeChars = findChunkRangeInTextFuzzy(full, chunkText, from);
@@ -302,31 +416,14 @@ export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
   }
   if (fromIndexRef) fromIndexRef.current = rangeChars.end;
 
-  const { start, end } = rangeChars;
-  let startNode = null;
-  let startOffset = 0;
-  let endNode = null;
-  let endOffset = 0;
-  for (const seg of segments) {
-    if (startNode == null && seg.end > start) {
-      startNode = seg.node;
-      startOffset = start - seg.start;
-    }
-    if (seg.end >= end) {
-      endNode = seg.node;
-      endOffset = end - seg.start;
-      break;
-    }
-  }
-  if (!startNode || !endNode) {
-    restoreDocScrollSnapshots(scrollSnaps);
+  if (useCss) {
+    paintSentence(body, doc, rangeChars.start, rangeChars.end);
     return;
   }
 
   try {
-    const range = doc.createRange();
-    range.setStart(startNode, Math.max(0, Math.min(startOffset, startNode.textContent.length)));
-    range.setEnd(endNode, Math.max(0, Math.min(endOffset, endNode.textContent.length)));
+    const range = rangeForOffsets(doc, segments, rangeChars.start, rangeChars.end);
+    if (!range) return;
     const mark = doc.createElement('mark');
     mark.className = 'tts-reading';
     mark.style.backgroundColor = 'rgba(250, 204, 21, 0.5)';
@@ -348,5 +445,7 @@ export function applyEpubTtsHighlight(doc, chunkText, fromIndexRef) {
 
 export function clearEpubTtsHighlight(doc) {
   if (!doc?.body) return;
+  clearCssHighlights(doc.defaultView);
+  if (_active?.doc === doc) _active = null;
   unwrapTtsMarks(doc.body);
 }

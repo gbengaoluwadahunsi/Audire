@@ -10,7 +10,7 @@ export function PlaybackProvider({ children }) {
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(1);
   const [speed, setSpeedState] = useState(getSettings().speed || 1.0);
-  const [voice, setVoiceState] = useState(getSettings().voice || 'en-US-AvaMultilingualNeural');
+  const [voice, setVoiceState] = useState(getSettings().edgeTtsVoice || 'en-US-AvaMultilingualNeural');
   const [pitch, setPitchState] = useState(getSettings().pitch || 0);
   const [sleepTimer, setSleepTimer] = useState(null); // time in ms when to stop
 
@@ -31,7 +31,8 @@ export function PlaybackProvider({ children }) {
     setVoiceState(v);
     ttsManager.setEdgeTtsVoice(v);
     const settings = getSettings();
-    saveSettings({ ...settings, voice: v });
+    // Same key the Reader and Settings read, so the choice sticks across books.
+    saveSettings({ ...settings, edgeTtsVoice: v });
   }, []);
 
   const setPitch = useCallback((p) => {
@@ -195,6 +196,8 @@ export function PlaybackProvider({ children }) {
   );
 }
 
+// Provider + hook in one file is intentional; only the hook is consumed elsewhere.
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePlayback() {
   const ctx = useContext(PlaybackContext);
   if (!ctx) throw new Error('usePlayback must be used within PlaybackProvider');

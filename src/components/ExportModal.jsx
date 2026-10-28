@@ -12,7 +12,7 @@ function ExportModal({ bookData, onClose, addToast }) {
       try {
         const hs = await getHighlights(bookData.id);
         setHighlights(hs || []);
-      } catch (err) {
+      } catch {
         addToast?.('Failed to load highlights', 'error');
       } finally {
         setIsLoading(false);

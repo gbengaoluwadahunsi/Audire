@@ -31,6 +31,8 @@
   --radius-lg: 18px;
   --radius-xl: 24px;
   --radius-2xl: 32px;
+  --radius-full: 999px;
+  --on-primary: #fff; /* text on primary/accent/status fills */
 
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);

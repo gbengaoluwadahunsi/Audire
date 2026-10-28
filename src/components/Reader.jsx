@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, BookmarkPlus, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import { ttsManager } from '../lib/ttsManager';
@@ -24,7 +24,9 @@ import {
   applyEpubTtsHighlight,
   clearPdfTtsHighlight,
   clearEpubTtsHighlight,
+  applyTtsWordHighlight,
 } from '../lib/ttsHighlight';
+import VoiceStatus from './VoiceStatus';
 import { getBookmarks, addBookmark, removeBookmark, getHighlights, addHighlight, removeHighlight, HIGHLIGHT_COLORS } from '../lib/bookmarks';
 import { usePlayback } from '../context/PlaybackContext';
 import AIPanel from './AIPanel';
@@ -55,6 +57,21 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
   const [showFlashcards, setShowFlashcards] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showExtras, setShowExtras] = useState(false);
+  const extrasRef = useRef(null);
+
+  // Close the Extras menu on an outside click or Escape.
+  useEffect(() => {
+    if (!showExtras) return;
+    const onDown = (e) => { if (!extrasRef.current?.contains(e.target)) setShowExtras(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowExtras(false); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [showExtras]);
   const [quoteShareData, setQuoteShareData] = useState(null); // { text, bookTitle, bookAuthor }
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -74,21 +91,15 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
 
   // Sleep Timer state
   const [sleepTimer, setSleepTimer] = useState(null); // time in minutes, null means off
-  const [sleepTimerRemaining, setSleepTimerRemaining] = useState(null); // time remaining in seconds
 
   useEffect(() => {
-    if (sleepTimer === null) {
-      setSleepTimerRemaining(null);
-      return;
-    }
+    if (sleepTimer === null) return;
     
     // Set the end time
     const endTime = Date.now() + sleepTimer * 60000;
-    setSleepTimerRemaining(sleepTimer * 60);
 
     const interval = setInterval(() => {
       const remain = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-      setSleepTimerRemaining(remain);
       
       if (remain <= 0) {
         setSleepTimer(null);
@@ -200,11 +211,29 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
 
   useEffect(() => {
     const s = getSettings();
-    ttsManager.setSpeed(s.speed);
-    ttsManager.setEdgeTtsVoice(s.edgeTtsVoice);
+    ttsManager.applySettings(s);
     setSkipJunk(s.skipJunk !== false);
     setKaraokeEnabled(!!s.karaokeHighlight);
+    // Word timings arrive after the sentence highlight for the same chunk is painted.
+    ttsManager.onWordBoundary = (_chunkIndex, word) => applyTtsWordHighlight(word.text);
+    return () => { ttsManager.onWordBoundary = null; };
   }, []);
+
+  // Tell the reader when playback moves to a backup voice, or back again.
+  useEffect(() => {
+    const onStatus = (e) => {
+      const { notice, engineLabel, voice, reason } = e.detail || {};
+      if (notice === 'switched') {
+        addToast?.(`${reason || 'The voice did not respond'}. Continuing with ${engineLabel} · ${voice}.`, 'info');
+      } else if (notice === 'restored') {
+        addToast?.(`Back to your first-choice voice: ${engineLabel} · ${voice}.`, 'info');
+      } else if (notice === 'waking') {
+        addToast?.('Waking up the voice server. The first sentence can take a few seconds.', 'info');
+      }
+    };
+    window.addEventListener('audire-tts-status', onStatus);
+    return () => window.removeEventListener('audire-tts-status', onStatus);
+  }, [addToast]);
 
   // Clear any karaoke highlight once playback stops.
   useEffect(() => {
@@ -930,22 +959,18 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         // chunk 0, and runLoop submits chunk N+1 while chunk N plays. Adding more
         // jobs here would flood the serial worker queue and starve earlier chunks.
 
-        // For Web Speech: clear loading immediately (no generation delay, starts instantly).
-        // For Edge TTS: keep spinner up until the first chunk is generated and about to play,
-        // so there's no silent gap between the spinner disappearing and audio starting.
-        const isEdgeTTS = ttsManager.engine === 'edge-tts';
-        if (!isEdgeTTS) setIsTTSLoading(false);
-
+        // Keep the spinner up until the first chunk is about to play (every engine reports
+        // that through the chunk callback), so there's no silent gap after it disappears.
         if (chunks && chunks.length > 0) {
           console.log(`Reader: Sending ${chunks.length} chunks to TTS engine`);
-          let firstChunkSignalled = !isEdgeTTS;
+          let firstChunkSignalled = false;
           ttsHighlightFromRef.current = 0;
           const karaokeText = text;
 
           await ttsManager.speakContinuous(chunks, (done, total) => {
             if (!firstChunkSignalled) {
               firstChunkSignalled = true;
-              setIsTTSLoading(false); // Edge TTS: first chunk generated, audio is about to play
+              setIsTTSLoading(false); // first chunk generated, audio is about to play
             }
             if (bookData.format === 'pdf' && sessionId === playbackSessionRef.current) {
               const ct = Math.max(1, totalPages - pdfPageOffset);
@@ -977,7 +1002,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         // and say so instead.
         if (ttsManager._abortedOnFailure) {
           console.warn('Reader: TTS aborted mid-page, not advancing');
-          addToast?.('Speech stopped — the voice service could not be reached. Press play to continue.', 'error');
+          addToast?.('Reading stopped: none of your voices could be reached. Check your connection and press play to continue, or pick another voice in Settings.', 'error');
           break;
         }
 
@@ -1020,7 +1045,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
       }
     } catch (err) {
       console.error('Reader: TTS Loop Error:', err);
-      addToast?.(err?.message || 'TTS failed. Try switching to Web Speech engine.', 'error');
+      addToast?.(err?.message || 'Reading stopped unexpectedly. Press play to continue.', 'error');
     } finally {
       ttsStartingRef.current = false;
       setIsTTSLoading(false); // always clear spinner, even if session changed
@@ -1260,8 +1285,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         return;
       }
 
-      ttsManager.setEdgeTtsVoice(getSettings().edgeTtsVoice);
-      ttsManager.setSpeed(getSettings().speed || 1);
+      ttsManager.applySettings(getSettings());
       const ok = await ttsManager.downloadChunks(chunks, (done, total) => {
         setOfflineProgress(total ? Math.round((done / total) * 100) : 0);
       });
@@ -1550,13 +1574,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         </div>
         <div className="reader-actions">
           <button
-            className={`control-btn mobile-visible ${showAIPanel ? 'active' : ''}`}
-            onClick={() => setShowAIPanel(!showAIPanel)}
-            title="AI Assistant (Explain, Define, Summarize)"
-          >
-            <Sparkles size={18} />
-          </button>
-          <button
             className={`control-btn ${showSearch ? 'active' : ''}`}
             onClick={() => {
               setShowSearch(!showSearch);
@@ -1608,26 +1625,55 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           >
             <Highlighter size={18} />
           </button>
-          <button className="control-btn" onClick={handleAddBookmark} title="Add bookmark">
-            <Bookmark size={18} style={{ opacity: 0.6 }} />
+          <button className="control-btn" onClick={handleAddBookmark} title="Add bookmark here">
+            <BookmarkPlus size={18} />
           </button>
-          <button
-            className={`control-btn ${showFlashcards ? 'active' : ''}`}
-            onClick={() => { setShowFlashcards(!showFlashcards); setShowBookmarks(false); setShowHighlights(false); }}
-            title="Flashcards"
-          >
-            <Layers size={18} />
-          </button>
-          <button
-            className="control-btn"
-            onClick={() => setShowExport(true)}
-            title="Export Highlights"
-          >
-            <FileText size={18} />
-          </button>
+          <div className="reader-extras" ref={extrasRef}>
+            <button
+              type="button"
+              className={`control-btn mobile-visible ${showExtras || showAIPanel || showFlashcards ? 'active' : ''}`}
+              onClick={() => setShowExtras((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showExtras}
+              title="Extras: AI assistant, flashcards, export"
+            >
+              <Sparkles size={18} />
+            </button>
+            {showExtras && (
+              <div className="reader-extras-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowAIPanel(!showAIPanel); setShowExtras(false); }}
+                >
+                  <Sparkles size={16} />
+                  <span>AI assistant</span>
+                  <small>Explain, define, summarize</small>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowFlashcards(!showFlashcards); setShowBookmarks(false); setShowHighlights(false); setShowExtras(false); }}
+                >
+                  <Layers size={16} />
+                  <span>Flashcards</span>
+                  <small>Study cards from this chapter</small>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowExport(true); setShowExtras(false); }}
+                >
+                  <FileText size={16} />
+                  <span>Export highlights</span>
+                  <small>Copy or download as Markdown</small>
+                </button>
+              </div>
+            )}
+          </div>
           {onSplitScreen && (
             <button
-              className="control-btn"
+              className={`control-btn${inSplitView ? '' : ' reader-split-btn'}`}
               onClick={onSplitScreen}
               title={inSplitView ? "Exit Split View (Maximize)" : "Split Screen Reading"}
             >
@@ -1669,6 +1715,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
               /> Cont.
             </label>
           </div>
+          <VoiceStatus active={isPlayingTTS} />
         </div>
       </div>
 
@@ -2014,7 +2061,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           zIndex: 1000
         }}>
           <button 
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text-primary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
             onClick={() => {
               handleAddHighlight();
               if (bookData.format === 'epub') {
@@ -2031,7 +2078,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
           </button>
           <div style={{ width: 1, background: 'var(--border)' }} />
           <button 
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: 'var(--text-primary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
             onClick={() => {
               navigator.clipboard.writeText(selectedText);
               addToast?.('Copied to clipboard', 'success');
@@ -2141,7 +2188,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
                 <select
                   value={sleepTimer || ''}
                   onChange={(e) => setSleepTimer(e.target.value ? parseInt(e.target.value, 10) : null)}
-                  style={{ marginLeft: 'auto', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text)' }}
+                  style={{ marginLeft: 'auto', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
                 >
                   <option value="">Off</option>
                   <option value="15">15 minutes</option>

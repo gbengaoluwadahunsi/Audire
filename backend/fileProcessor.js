@@ -19,7 +19,7 @@ export async function processUpload(filePath, booksDir, coversDir) {
     return processEpub(filePath, id, coversDir);
   }
   if (ext === '.pdf') {
-    return processPdf(filePath, id, coversDir);
+    return processPdf(filePath, id);
   }
   throw new Error('Unsupported format. Use EPUB or PDF.');
 }
@@ -191,7 +191,7 @@ async function processEpubCustom(filePath, id, coversDir) {
   return { coverPath, title, author };
 }
 
-async function processPdf(filePath, id, coversDir) {
+async function processPdf(filePath, id) {
   let title = path.basename(filePath, '.pdf');
   let author = null;
   let coverPath = null;

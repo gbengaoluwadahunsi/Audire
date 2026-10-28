@@ -4,7 +4,7 @@ import { usePlayback } from '../context/PlaybackContext';
 import { BookOpen, LayoutGrid, X, Plus } from 'lucide-react';
 
 /**
- * N-pane split view (N = 1 … 4).
+ * Split view with up to MAX_PANES panes (two: more is unreadable on most screens).
  *
  * Each slot (A, B, C, D) is a stable identity for a reader — slots never
  * swap positions so a reader is never unmounted (and never stops reading
@@ -28,6 +28,7 @@ import { BookOpen, LayoutGrid, X, Plus } from 'lucide-react';
  */
 
 const SLOTS = ['A', 'B', 'C', 'D'];
+export const MAX_PANES = 2;
 const slotIndex = (slot) => SLOTS.indexOf(slot);
 
 function SplitView({
@@ -67,14 +68,11 @@ function SplitView({
   });
 
   // Re-distribute widths when the number of active panes changes
-  const prevCountRef = useRef(activePaneCount);
-  useEffect(() => {
-    if (prevCountRef.current !== activePaneCount) {
-      prevCountRef.current = activePaneCount;
-      const n = Math.max(activePaneCount, 1);
-      setWidths(Array(4).fill(100 / n));
-    }
-  }, [activePaneCount]);
+  const [widthsForCount, setWidthsForCount] = useState(activePaneCount);
+  if (widthsForCount !== activePaneCount) {
+    setWidthsForCount(activePaneCount);
+    setWidths(Array(4).fill(100 / Math.max(activePaneCount, 1)));
+  }
 
   // Tell pdf.js / epub.js to re-paginate after layout changes
   useEffect(() => {
@@ -136,7 +134,7 @@ function SplitView({
   }, []);
 
   const renderTopBar = (slot, kind, book) => {
-    const canAddPane = activePaneCount < 4;
+    const canAddPane = activePaneCount < MAX_PANES;
     return (
       <div className="split-pane-top-bar">
         <div className="split-pane-title">
@@ -183,7 +181,7 @@ function SplitView({
               type="button"
               className="split-pane-icon-btn split-pane-add-btn"
               onClick={onAddPane}
-              title="Add another pane (up to 4 books side by side)"
+              title="Read another book side by side"
             >
               <Plus size={14} />
             </button>
@@ -201,7 +199,7 @@ function SplitView({
     );
   };
 
-  const renderPane = (slot, activeIdx) => {
+  const renderPane = (slot) => {
     const idx = slotIndex(slot);
     const book = paneBooks[idx];
     const isApp = slot === appSlot;
@@ -247,7 +245,7 @@ function SplitView({
     <div className={['split-view-container', isSplit ? 'is-split' : ''].filter(Boolean).join(' ')}>
       {activeSlots.map((slot, i) => (
         <React.Fragment key={slot}>
-          {renderPane(slot, i)}
+          {renderPane(slot)}
           {i < activeSlots.length - 1 && (
             <div
               key={`resizer-${i}`}

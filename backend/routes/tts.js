@@ -21,8 +21,37 @@ function toEdgePitch(pitch) {
   return `${p >= 0 ? '+' : ''}${p}Hz`;
 }
 
+/**
+ * Attach each spoken word's position in `text`, so the client can highlight it.
+ * Edge reports words in order, so a forward-only search is enough.
+ */
+export function locateWords(text, boundaries) {
+  let cursor = 0;
+  const out = [];
+  for (const b of boundaries) {
+    const word = b.part || '';
+    if (!word) continue;
+    const at = text.indexOf(word, cursor);
+    if (at === -1) continue;
+    out.push({ text: word, offset: at, start: b.start, end: b.end });
+    cursor = at + word.length;
+  }
+  return out;
+}
+
+/** Audio + word timings as JSON. Used when the client asks for `words: true`. */
+async function synthesizeWithWords(engine, text) {
+  const audio = [];
+  const boundaries = [];
+  for await (const chunk of engine.streamAudio(text)) {
+    if (Buffer.isBuffer(chunk)) audio.push(chunk);
+    else boundaries.push(chunk);
+  }
+  return { audio: Buffer.concat(audio), words: locateWords(text, boundaries) };
+}
+
 router.post('/', async (req, res) => {
-  const { text, voice, rate, pitch } = req.body || {};
+  const { text, voice, rate, pitch, words } = req.body || {};
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
     return res.status(400).json({ error: 'text is required' });
   }
@@ -43,8 +72,16 @@ router.post('/', async (req, res) => {
         rate: toEdgeRate(typeof rate === 'number' ? rate : 1),
         pitch: toEdgePitch(typeof pitch === 'number' ? pitch : 0),
         timeout: 30000,
-        saveSubtitles: false,
+        // Word boundaries are only sent by Edge when subtitles are requested.
+        saveSubtitles: words === true,
       });
+
+      if (words === true) {
+        const result = await synthesizeWithWords(engine, trimmed);
+        if (result.audio.length < 100) throw new Error('Empty audio');
+        res.set('Cache-Control', 'no-store');
+        return res.json({ audio: result.audio.toString('base64'), words: result.words });
+      }
 
       await engine.ttsPromise(trimmed, outPath);
       const stat = await fs.stat(outPath);

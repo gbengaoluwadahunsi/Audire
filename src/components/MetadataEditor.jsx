@@ -77,7 +77,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
         aria-modal="true"
         aria-labelledby="metadata-editor-title"
         style={{
-          background: 'var(--bg-primary)',
+          background: 'var(--bg-elevated)',
           borderRadius: '12px',
           padding: '24px',
           maxWidth: '480px',
@@ -89,7 +89,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 id="metadata-editor-title" style={{ margin: 0, fontSize: '1.25rem' }}>Edit Book Details</h2>
-          <button onClick={onClose} aria-label="Close metadata editor" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)' }}>
+          <button onClick={onClose} aria-label="Close metadata editor" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}>
             <X size={20} />
           </button>
         </div>
@@ -105,7 +105,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
             ) : (
               <div style={{
                 width: '120px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--bg-tertiary)', borderRadius: '6px'
+                background: 'var(--surface-hover)', borderRadius: '6px'
               }}>
                 <FileText size={32} color="var(--text-tertiary)" />
               </div>
@@ -114,7 +114,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
               style={{
                 display: 'block', marginTop: '8px', textAlign: 'center',
                 padding: '6px', fontSize: '0.8rem', cursor: 'pointer',
-                background: 'var(--bg-tertiary)', borderRadius: '6px',
+                background: 'var(--surface-hover)', borderRadius: '6px',
                 color: 'var(--text-secondary)', border: '1px solid var(--border)',
               }}
             >
@@ -133,8 +133,8 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
                 onChange={(e) => setTitle(e.target.value)}
                 style={{
                   width: '100%', padding: '8px 12px', borderRadius: '6px',
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  color: 'var(--text)', fontSize: '0.95rem',
+                  border: '1px solid var(--border)', background: 'var(--surface)',
+                  color: 'var(--text-primary)', fontSize: '0.95rem',
                 }}
               />
             </div>
@@ -146,8 +146,8 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
                 onChange={(e) => setAuthor(e.target.value)}
                 style={{
                   width: '100%', padding: '8px 12px', borderRadius: '6px',
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  color: 'var(--text)', fontSize: '0.95rem',
+                  border: '1px solid var(--border)', background: 'var(--surface)',
+                  color: 'var(--text-primary)', fontSize: '0.95rem',
                 }}
               />
             </div>
@@ -159,7 +159,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
             type="button"
             onClick={() => setShowSearch(!showSearch)}
             style={{
-              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              background: 'var(--surface-hover)', border: '1px solid var(--border)',
               borderRadius: '6px', padding: '8px 14px', cursor: 'pointer',
               color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px',
             }}
@@ -170,7 +170,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
         </div>
 
         {showSearch && (
-          <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
+          <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--surface)', borderRadius: '8px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 type="text"
@@ -180,8 +180,8 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
                 placeholder="Search by book title..."
                 style={{
                   flex: 1, padding: '8px 12px', borderRadius: '6px',
-                  border: '1px solid var(--border)', background: 'var(--bg-primary)',
-                  color: 'var(--text)', fontSize: '0.9rem',
+                  border: '1px solid var(--border)', background: 'var(--bg-elevated)',
+                  color: 'var(--text-primary)', fontSize: '0.9rem',
                 }}
               />
               <button
@@ -205,7 +205,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
                     style={{
                       display: 'flex', alignItems: 'center', gap: '10px',
                       padding: '8px', borderRadius: '6px', border: '1px solid var(--border)',
-                      background: 'var(--bg-primary)', cursor: 'pointer', textAlign: 'left',
+                      background: 'var(--bg-elevated)', cursor: 'pointer', textAlign: 'left',
                     }}
                   >
                     {r.cover && (
@@ -228,7 +228,7 @@ export default function MetadataEditor({ book, onClose, onUpdated, addToast }) {
             onClick={onClose}
             style={{
               padding: '8px 16px', borderRadius: '6px', border: '1px solid var(--border)',
-              background: 'var(--bg-secondary)', color: 'var(--text)', cursor: 'pointer',
+              background: 'var(--surface)', color: 'var(--text-primary)', cursor: 'pointer',
             }}
           >
             Cancel
