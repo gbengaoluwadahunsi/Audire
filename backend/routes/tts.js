@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { EdgeTTS } from 'node-edge-tts';
+import drm from 'node-edge-tts/dist/drm.js';
+import WebSocket from 'ws';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -7,6 +9,37 @@ import crypto from 'crypto';
 
 const router = Router();
 const VOICE_DEFAULT = 'en-US-AvaMultilingualNeural';
+
+// node-edge-tts 1.2.12 connects to api.msedgeservices.com, which now answers the
+// WebSocket upgrade with a plain 200. The original speech.platform.bing.com
+// endpoint still handshakes when given the v2 Sec-MS-GEC token, so connect there.
+class BingEdgeTTS extends EdgeTTS {
+  _connectWebSocket() {
+    const major = drm.CHROMIUM_FULL_VERSION.split('.')[0];
+    const url =
+      'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1' +
+      `?TrustedClientToken=${drm.TRUSTED_CLIENT_TOKEN}` +
+      `&Sec-MS-GEC=${drm.generateSecMsGecToken_V2()}` +
+      `&Sec-MS-GEC-Version=${drm.SEC_MS_GEC_VERSION_V2}`;
+    const ws = new WebSocket(url, {
+      origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+      headers: {
+        Pragma: 'no-cache',
+        'Cache-Control': 'no-cache',
+        'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`,
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error('Timed out while connecting to Edge TTS'));
+      }, this.timeout);
+      ws.once('open', () => { clearTimeout(timer); resolve(ws); });
+      ws.once('error', (err) => { clearTimeout(timer); reject(err); });
+    });
+  }
+}
 
 function toEdgeRate(rate) {
   const r = Number.isFinite(rate) ? Math.max(0.5, Math.min(rate, 3)) : 1;
@@ -66,7 +99,7 @@ router.post('/', async (req, res) => {
 
   while (retryCount < maxRetries) {
     try {
-      const engine = new EdgeTTS({
+      const engine = new BingEdgeTTS({
         voice: chosenVoice,
         outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
         rate: toEdgeRate(typeof rate === 'number' ? rate : 1),
