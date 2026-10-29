@@ -6,7 +6,7 @@ export const ENGINE_INFO = {
   [ENGINE_KOKORO]: {
     label: 'Kokoro neural voice',
     short: 'Kokoro',
-    description: 'A natural neural voice that runs entirely in your browser. Downloads once (~90 MB), then works offline.',
+    description: 'A natural neural voice that runs entirely in your browser. Downloads once (~82 MB), then works offline.',
   },
 };
 

@@ -74,7 +74,7 @@ export default function VoiceSettings({ settings, update }) {
       <h3>Voice</h3>
       <p className="dashboard-settings-hint">
         Kokoro runs entirely in your browser — no server needed, works offline.
-        The model downloads once (~90 MB) and is then cached on your device.
+        The model downloads once (~82 MB) and is then cached on your device.
       </p>
 
       <div className="voice-engine">

@@ -64,11 +64,11 @@ export function loadKokoro() {
   });
 }
 
-export async function kokoroSpeak(text, voice = 'af_heart') {
+export async function kokoroSpeak(text, voice = 'af_heart', speed = 1) {
   if (!modelReady) await loadKokoro();
   const id = ++msgId;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    getWorker().postMessage({ type: 'speak', id, text, voice });
+    getWorker().postMessage({ type: 'speak', id, text, voice, speed });
   });
 }

@@ -89,7 +89,7 @@ export class TTSManager {
   }
 
   _cacheKey(text) {
-    return `${text}|${this.kokoroVoice}`;
+    return `${text}|${this.kokoroVoice}|${this.speed}`;
   }
 
   voiceLabel() {
@@ -168,7 +168,12 @@ export class TTSManager {
     if (!text || !/[a-zA-ZÀ-ÿ0-9]/.test(text)) return null;
     const key = this._cacheKey(text);
     if (this._audioCache.has(key)) return this._audioCache.get(key);
-    const promise = kokoroSpeak(text, this.kokoroVoice).catch(() => null);
+    const promise = kokoroSpeak(text, this.kokoroVoice, this.speed).catch((err) => {
+      console.error('[TTS] Kokoro synthesis failed:', err?.message || err);
+      this._lastError = err?.message || String(err);
+      this._audioCache.delete(key);
+      return null;
+    });
     this._audioCache.set(key, promise);
     return promise;
   }
@@ -181,7 +186,7 @@ export class TTSManager {
     const clean = (text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
 
-    const result = await kokoroSpeak(clean, this.kokoroVoice);
+    const result = await kokoroSpeak(clean, this.kokoroVoice, this.speed);
     if (!result || this._stopped) return;
 
     const ctx = this._getAudioCtx();
@@ -192,7 +197,6 @@ export class TTSManager {
 
     const source = ctx.createBufferSource();
     source.buffer = buf;
-    source.playbackRate.value = this.speed;
     source.connect(this._gainNode);
     this._currentSource = source;
 
@@ -217,7 +221,6 @@ export class TTSManager {
 
     const source = ctx.createBufferSource();
     source.buffer = buf;
-    source.playbackRate.value = this.speed;
     source.connect(this._gainNode);
     this._currentSource = source;
 
@@ -229,7 +232,8 @@ export class TTSManager {
         ? now + 0.05
         : timing.nextStartTime;
     source.start(startAt);
-    timing.nextStartTime = startAt + buf.duration / this.speed;
+    // Speed is applied during synthesis, so the buffer duration is already correct.
+    timing.nextStartTime = startAt + buf.duration;
     this._hasPlayedThisSession = true;
 
     onChunkComplete?.(chunkIndex + 1, total);
@@ -287,7 +291,10 @@ export class TTSManager {
       if (!alive()) return;
 
       if (!result) {
-        console.error('[TTS] Kokoro could not generate chunk', currentIndex);
+        console.error(
+          `[TTS] Kokoro could not generate chunk ${currentIndex}:`,
+          this._lastError || 'timed out',
+        );
         this._abortedOnFailure = true;
         return;
       }
