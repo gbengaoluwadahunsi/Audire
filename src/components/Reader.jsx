@@ -218,16 +218,10 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
     return () => { ttsManager.onWordBoundary = null; };
   }, []);
 
-  // Tell the reader when playback moves to a backup voice, or back again.
   useEffect(() => {
     const onStatus = (e) => {
-      const { notice, engineLabel, voice, reason } = e.detail || {};
-      if (notice === 'switched') {
-        addToast?.(`${reason || 'The voice did not respond'}. Continuing with ${engineLabel} · ${voice}.`, 'info');
-      } else if (notice === 'restored') {
-        addToast?.(`Back to your first-choice voice: ${engineLabel} · ${voice}.`, 'info');
-      } else if (notice === 'waking') {
-        addToast?.('Waking up the voice server. The first sentence can take a few seconds.', 'info');
+      if (e.detail?.notice === 'loading') {
+        addToast?.('Downloading the voice (about 82 MB, first time only). Reading starts when it is ready.', 'info');
       }
     };
     window.addEventListener('audire-tts-status', onStatus);

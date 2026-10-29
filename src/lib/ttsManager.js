@@ -3,9 +3,10 @@ import { kokoroSpeak, loadKokoro, isKokoroReady } from './voices/kokoroEngine';
 import { KOKORO_DEFAULT_VOICE } from './kokoroVoices';
 import { ENGINE_KOKORO, ENGINE_INFO } from './voices/engines';
 
-// How long to wait for a chunk before giving up.
-export const CHUNK_BUDGET_MS = 15000;
-export const FIRST_CHUNK_BUDGET_MS = 30000;
+// Safety net only: synthesis is local, so it fails by throwing rather than hanging.
+// A long paragraph on single-threaded WASM can take well over 15s on a slow device.
+// The model download is waited for separately and never counts against this.
+export const CHUNK_BUDGET_MS = 90000;
 
 /** Resolve with the promise's value, or null if it takes longer than `ms`. */
 export function withBudget(promise, ms) {
@@ -265,6 +266,18 @@ export class TTSManager {
     const alive = () =>
       !this._stopped && !(sessionId && this.currentSessionId !== sessionId);
 
+    if (!isKokoroReady()) {
+      this._dispatch('audire-tts-status', { ...this.status, notice: 'loading' });
+      try {
+        await loadKokoro();
+      } catch (err) {
+        console.error('[TTS] Kokoro model failed to load:', err?.message || err);
+        this._abortedOnFailure = true;
+        return;
+      }
+      if (!alive()) return;
+    }
+
     for (let i = 0; i < Math.min(3, total); i++) this._prefetch(textChunks, i);
 
     const runLoop = async () => {
@@ -285,8 +298,7 @@ export class TTSManager {
       if (!chunk) { currentIndex++; return runLoop(); }
 
       const promise = this._prefetch(textChunks, currentIndex);
-      const budget = this._hasPlayedThisSession ? CHUNK_BUDGET_MS : FIRST_CHUNK_BUDGET_MS;
-      const result = promise ? await withBudget(promise, budget) : null;
+      const result = promise ? await withBudget(promise, CHUNK_BUDGET_MS) : null;
 
       if (!alive()) return;
 
