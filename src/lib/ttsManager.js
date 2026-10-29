@@ -1,21 +1,24 @@
-// TTS Manager: Kokoro neural voice running entirely in the browser.
-import { kokoroSpeak, loadKokoro, isKokoroReady } from './voices/kokoroEngine';
-import { KOKORO_DEFAULT_VOICE } from './kokoroVoices';
-import { ENGINE_KOKORO, ENGINE_INFO } from './voices/engines';
+// TTS Manager: reads text aloud with the device's built-in voices (Web Speech API),
+// preferring the natural/neural ones (e.g. Edge's "Ava Online (Natural)").
+//
+// Pause is implemented as cancel + replay of the current sentence part on resume.
+// Real speechSynthesis.pause() is unreliable: Chrome can go permanently silent after
+// ~15s paused, and Android ignores pause() entirely.
+import {
+  cancelWebSpeech,
+  getWebSpeechVoices,
+  isWebSpeechSpeaking,
+  isWebSpeechSupported,
+  naturalVoices,
+  onVoicesChanged,
+  resolveWebSpeechVoice,
+  speakWithWebSpeech,
+  splitForSpeech,
+} from './voices/webSpeechEngine';
 
-// Safety net only: synthesis is local, so it fails by throwing rather than hanging.
-// A long paragraph on single-threaded WASM can take well over 15s on a slow device.
-// The model download is waited for separately and never counts against this.
-export const CHUNK_BUDGET_MS = 90000;
-
-/** Resolve with the promise's value, or null if it takes longer than `ms`. */
-export function withBudget(promise, ms) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); }),
-  ]).finally(() => clearTimeout(timer));
-}
+const SPEAKABLE = /[\p{L}\p{N}]/u;
+const MAX_ATTEMPTS = 2;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Character offset → word at that position. */
 export function wordAt(text, charIndex) {
@@ -23,62 +26,43 @@ export function wordAt(text, charIndex) {
   return m ? { offset: charIndex, text: m[0] } : null;
 }
 
-export function prewarmFirstChunk() {}
-
 export class TTSManager {
   constructor() {
-    this.kokoroVoice = KOKORO_DEFAULT_VOICE;
+    this.webSpeechVoice = ''; // voiceURI; empty = best natural voice available
     this.speed = 1.0;
     this.volume = 1.0;
     this.isPaused = false;
     this._stopped = false;
-    this._audioCtx = null;
-    this._gainNode = null;
-    this._currentSource = null;
-    this._audioCache = new Map();
+    this._speaking = false;
+    this._sessionActive = false;
     this._abortedOnFailure = false;
-    this._hasPlayedThisSession = false;
-    this.isLoaded = false;
-    this.isLoading = false;
     this.wantWordTimings = false;
     this.onWordBoundary = null;
     this.currentSessionId = null;
-    this.status = {
-      engine: ENGINE_KOKORO,
-      engineLabel: ENGINE_INFO[ENGINE_KOKORO].short,
-      voice: KOKORO_DEFAULT_VOICE,
-      isBackup: false,
-      reason: '',
-    };
+    this.isLoaded = true;
+    this.isLoading = false;
+    this._voices = [];
+    this.status = { engine: 'web-speech', engineLabel: 'Device', voice: '', isBackup: false, reason: '' };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('audire-kokoro-ready', () => {
-        this.isLoaded = true;
-        this.isLoading = false;
-        this._dispatch('audire-tts-status', { ...this.status });
-      });
-      window.addEventListener('audire-kokoro-error', () => {
-        this.isLoading = false;
-      });
-      this.isLoading = true;
-      loadKokoro().then(() => {
-        this.isLoaded = true;
-        this.isLoading = false;
-      }).catch(() => {
-        this.isLoading = false;
-      });
+      getWebSpeechVoices().then((v) => { this._voices = v; }).catch(() => {});
+      onVoicesChanged((v) => { if (v.length) this._voices = v; });
     }
   }
 
-  _getAudioCtx() {
-    if (!this._audioCtx || this._audioCtx.state === 'closed') {
-      const Cls = window.AudioContext || window.webkitAudioContext;
-      this._audioCtx = new Cls();
-      this._gainNode = this._audioCtx.createGain();
-      this._gainNode.gain.value = this.volume ?? 1;
-      this._gainNode.connect(this._audioCtx.destination);
-    }
-    return this._audioCtx;
+  /** The voice that will actually be used: from the natural voices whenever the device has any. */
+  get voice() {
+    const natural = naturalVoices(this._voices);
+    return resolveWebSpeechVoice(natural.length ? natural : this._voices, this.webSpeechVoice);
+  }
+
+  async _ensureVoices() {
+    if (!this._voices.length) this._voices = await getWebSpeechVoices();
+    return this._voices;
+  }
+
+  _alive(sessionId) {
+    return !this._stopped && !(sessionId && this.currentSessionId !== sessionId);
   }
 
   _dispatch(name, detail) {
@@ -86,20 +70,12 @@ export class TTSManager {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(name, detail === undefined ? undefined : { detail }));
       }
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
-  _cacheKey(text) {
-    return `${text}|${this.kokoroVoice}|${this.speed}`;
-  }
-
-  voiceLabel() {
-    return this.kokoroVoice;
-  }
-
-  isEngineAvailable() {
-    return isKokoroReady();
-  }
+  // ─── Media session ───────────────────────────────────────────────────────
 
   _setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
@@ -129,122 +105,84 @@ export class TTSManager {
     navigator.mediaSession.metadata = null;
   }
 
+  // ─── Controls ────────────────────────────────────────────────────────────
+
   pause() {
     this.isPaused = true;
-    this._audioCtx?.suspend().catch(() => {});
+    if (this._speaking) cancelWebSpeech();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
   }
 
   resume() {
     this.isPaused = false;
-    this._audioCtx?.resume().catch(() => {});
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   }
 
-  unlockAudioContext() {
-    const ctx = this._getAudioCtx();
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-  }
+  /** Kept for the Reader's play handler; speechSynthesis has no audio context to unlock. */
+  unlockAudioContext() {}
+
+  async init() {}
 
   async _waitIfPaused(sessionId) {
-    while (
-      this.isPaused &&
-      !this._stopped &&
-      (sessionId === undefined || sessionId === this.currentSessionId)
-    ) {
-      await new Promise((r) => setTimeout(r, 50));
+    while (this.isPaused && this._alive(sessionId)) await sleep(50);
+  }
+
+  // ─── Speaking ────────────────────────────────────────────────────────────
+
+  /**
+   * Speak one chunk (a sentence or two), part by part. A part interrupted by pause is
+   * replayed from its start on resume. Returns false only if the voice kept failing.
+   */
+  async _speakChunk(chunk, chunkIndex, sessionId, onFirstStart) {
+    let started = false;
+    for (const part of splitForSpeech(chunk)) {
+      for (let attempt = 0; ; ) {
+        await this._waitIfPaused(sessionId);
+        if (!this._alive(sessionId)) return true;
+
+        this._speaking = true;
+        const result = await speakWithWebSpeech(part.text, {
+          voice: this.voice,
+          rate: this.speed,
+          volume: this.volume,
+          onStart: () => {
+            if (!started) { started = true; onFirstStart?.(); }
+          },
+          onWord: (charIndex) => {
+            const w = wordAt(chunk, part.offset + charIndex);
+            if (w) this.onWordBoundary?.(chunkIndex, w);
+          },
+        });
+        this._speaking = false;
+
+        if (!this._alive(sessionId)) return true;
+        if (this.isPaused) continue;
+        if (result === 'ended') break;
+        if (++attempt >= MAX_ATTEMPTS) return false;
+        // Chrome sometimes leaves a stuck utterance in the queue; clear it before retrying.
+        cancelWebSpeech();
+        await sleep(300);
+      }
     }
+    return true;
   }
 
-  async init() {
-    this.isLoaded = isKokoroReady();
-    return Promise.resolve();
-  }
-
-  // ─── Prefetch ─────────────────────────────────────────────────────────────
-
-  _prefetch(textChunks, index) {
-    if (index >= textChunks.length) return null;
-    const text = (textChunks[index] || '').trim();
-    if (!text || !/[a-zA-ZÀ-ÿ0-9]/.test(text)) return null;
-    const key = this._cacheKey(text);
-    if (this._audioCache.has(key)) return this._audioCache.get(key);
-    const promise = kokoroSpeak(text, this.kokoroVoice, this.speed).catch((err) => {
-      console.error('[TTS] Kokoro synthesis failed:', err?.message || err);
-      this._lastError = err?.message || String(err);
-      this._audioCache.delete(key);
-      return null;
-    });
-    this._audioCache.set(key, promise);
-    return promise;
-  }
-
-  // ─── Single utterance (voice preview) ────────────────────────────────────
-
+  /** Speak one short text (voice preview). */
   async speak(text) {
     this.stop();
     this._stopped = false;
     const clean = (text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
-
-    const result = await kokoroSpeak(clean, this.kokoroVoice, this.speed);
-    if (!result || this._stopped) return;
-
-    const ctx = this._getAudioCtx();
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-
-    const buf = ctx.createBuffer(1, result.audio.length, result.samplingRate);
-    buf.copyToChannel(result.audio, 0);
-
-    const source = ctx.createBufferSource();
-    source.buffer = buf;
-    source.connect(this._gainNode);
-    this._currentSource = source;
-
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-
-    return new Promise((resolve) => {
-      source.onended = () => { this._currentSource = null; resolve(); };
-      source.start(0);
-    });
-  }
-
-  async prepareFirstChunk(textChunks, count = 3) {
-    if (!textChunks || textChunks.length === 0) return;
-    for (let i = 0; i < Math.min(textChunks.length, count); i++) {
-      this._prefetch(textChunks, i);
+    if (!isWebSpeechSupported()) throw new Error('This browser cannot read aloud.');
+    await this._ensureVoices();
+    this._sessionActive = true;
+    try {
+      const ok = await this._speakChunk(clean, 0, undefined);
+      if (!ok && !this._stopped) throw new Error('This voice could not speak. Try another one.');
+    } finally {
+      this._sessionActive = false;
     }
   }
-
-  async _playChunk(ctx, result, chunkIndex, total, onChunkComplete, timing) {
-    const buf = ctx.createBuffer(1, result.audio.length, result.samplingRate);
-    buf.copyToChannel(result.audio, 0);
-
-    const source = ctx.createBufferSource();
-    source.buffer = buf;
-    source.connect(this._gainNode);
-    this._currentSource = source;
-
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-
-    const now = ctx.currentTime;
-    const startAt =
-      timing.nextStartTime === null || timing.nextStartTime < now + 0.05
-        ? now + 0.05
-        : timing.nextStartTime;
-    source.start(startAt);
-    // Speed is applied during synthesis, so the buffer duration is already correct.
-    timing.nextStartTime = startAt + buf.duration;
-    this._hasPlayedThisSession = true;
-
-    onChunkComplete?.(chunkIndex + 1, total);
-
-    await new Promise((r) => { source.onended = r; });
-    this._currentSource = null;
-    return true;
-  }
-
-  // ─── Continuous playback ─────────────────────────────────────────────────
 
   async speakContinuous(textChunks, onChunkComplete, sessionId, metadata = {}) {
     if (sessionId) this.currentSessionId = sessionId;
@@ -252,116 +190,69 @@ export class TTSManager {
     this.isPaused = false;
     this._abortedOnFailure = false;
 
-    if (metadata.title || metadata.author || metadata.cover) {
-      this.setMediaMetadata(metadata);
+    if (!isWebSpeechSupported()) {
+      this._abortedOnFailure = true;
+      return;
     }
+    if (metadata.title || metadata.author || metadata.cover) this.setMediaMetadata(metadata);
 
-    const ctx = this._getAudioCtx();
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    await this._ensureVoices();
+    const voice = this.voice;
+    this.status = { ...this.status, voice: voice?.name || 'Default voice' };
 
     const total = textChunks.length;
-    const timing = { nextStartTime: null };
-    let currentIndex = 0;
+    this._sessionActive = true;
+    try {
+      for (let i = 0; i < total; i++) {
+        if (!this._alive(sessionId)) return;
+        const chunk = (textChunks[i] || '').trim();
+        if (!chunk || !SPEAKABLE.test(chunk)) continue;
 
-    const alive = () =>
-      !this._stopped && !(sessionId && this.currentSessionId !== sessionId);
-
-    if (!isKokoroReady()) {
-      this._dispatch('audire-tts-status', { ...this.status, notice: 'loading' });
-      try {
-        await loadKokoro();
-      } catch (err) {
-        console.error('[TTS] Kokoro model failed to load:', err?.message || err);
-        this._abortedOnFailure = true;
-        return;
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+        const ok = await this._speakChunk(chunk, i, sessionId, () => onChunkComplete?.(i + 1, total));
+        if (!this._alive(sessionId)) return;
+        if (!ok) {
+          console.error(`[TTS] ${voice?.name || 'The voice'} could not read chunk ${i}`);
+          this._abortedOnFailure = true;
+          return;
+        }
       }
-      if (!alive()) return;
+    } finally {
+      this._sessionActive = false;
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
     }
-
-    for (let i = 0; i < Math.min(3, total); i++) this._prefetch(textChunks, i);
-
-    const runLoop = async () => {
-      if (currentIndex >= total || this._stopped) {
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
-        this.clearMediaMetadata();
-        return;
-      }
-
-      for (let i = currentIndex + 1; i < Math.min(currentIndex + 4, total); i++) {
-        this._prefetch(textChunks, i);
-      }
-
-      await this._waitIfPaused(sessionId);
-      if (!alive()) return;
-
-      const chunk = (textChunks[currentIndex] || '').trim();
-      if (!chunk) { currentIndex++; return runLoop(); }
-
-      const promise = this._prefetch(textChunks, currentIndex);
-      const result = promise ? await withBudget(promise, CHUNK_BUDGET_MS) : null;
-
-      if (!alive()) return;
-
-      if (!result) {
-        console.error(
-          `[TTS] Kokoro could not generate chunk ${currentIndex}:`,
-          this._lastError || 'timed out',
-        );
-        this._abortedOnFailure = true;
-        return;
-      }
-
-      this._audioCache.delete(this._cacheKey(chunk));
-      await this._playChunk(ctx, result, currentIndex, total, onChunkComplete, timing);
-      if (!alive()) return;
-
-      currentIndex++;
-      return runLoop();
-    };
-
-    return runLoop();
   }
 
   startSession() {
     this._stopped = false;
     this.isPaused = false;
     this._abortedOnFailure = false;
-    this._hasPlayedThisSession = false;
-    this._audioCache.clear();
   }
 
   stop() {
     this._stopped = true;
     this.isPaused = false;
-    try { this._currentSource?.stop(0); } catch {}
-    this._currentSource = null;
+    if (this._speaking || isWebSpeechSpeaking()) cancelWebSpeech();
+    this._speaking = false;
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
     this.clearMediaMetadata();
-    this._audioCache.clear();
   }
 
-  /** No-op: Kokoro is local, nothing to pre-download. */
-  async downloadChunks() { return 0; }
+  // ─── Settings ────────────────────────────────────────────────────────────
 
   applySettings(s = {}) {
-    if (s.kokoroVoice) this.kokoroVoice = s.kokoroVoice;
+    if (s.webSpeechVoice !== undefined) this.webSpeechVoice = s.webSpeechVoice;
     if (typeof s.speed === 'number') this.speed = s.speed;
     if (s.karaokeHighlight !== undefined) this.wantWordTimings = !!s.karaokeHighlight;
   }
 
-  setKokoroVoice(voice) {
-    this.kokoroVoice = voice || KOKORO_DEFAULT_VOICE;
-  }
-
+  setVoice(voiceURI) { this.webSpeechVoice = voiceURI || ''; }
   setSpeed(speed) { this.speed = speed; }
   setPitch() {}
-  setVolume(vol) {
-    this.volume = vol ?? 1;
-    if (this._gainNode) this._gainNode.gain.value = this.volume;
-  }
+  setVolume(vol) { this.volume = vol ?? 1; }
 
   get hasActivePlayback() {
-    return !!this._currentSource;
+    return this._sessionActive || this._speaking;
   }
 }
 

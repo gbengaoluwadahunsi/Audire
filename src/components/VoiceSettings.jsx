@@ -1,45 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import { Play, Square } from 'lucide-react';
 import { ttsManager } from '../lib/ttsManager';
-import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE } from '../lib/kokoroVoices';
-import { isKokoroReady, isKokoroLoading, getKokoroError } from '../lib/voices/kokoroEngine';
+import { useDeviceVoices, voiceDisplayName } from '../lib/voices/useDeviceVoices';
+import { isWebSpeechSupported, resolveWebSpeechVoice } from '../lib/voices/webSpeechEngine';
 
 const PREVIEW_TEXT = 'Hi, this is how this voice sounds when reading your books aloud.';
 
-function statusFromGlobals() {
-  return {
-    ready: isKokoroReady(),
-    loading: isKokoroLoading(),
-    error: getKokoroError(),
-    loaded: 0,
-    total: 0,
-  };
+/** Where this device's natural voices come from, for when none are installed. */
+function naturalVoiceHint() {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  if (isIOS) return 'For a natural voice, open Settings → Accessibility → Spoken Content → Voices → English, and download a voice marked Enhanced or Premium. Then reopen Audire.';
+  if (/Android/.test(ua)) return 'For a natural voice, install or update "Speech Recognition & Synthesis by Google" from the Play Store, then reopen Audire.';
+  if (/Macintosh/.test(ua)) return 'For a natural voice, open System Settings → Accessibility → Spoken Content → System Voice → Manage Voices, and download an Enhanced or Premium voice.';
+  if (/Edg\//.test(ua)) return 'Microsoft Edge\'s natural voices did not load. Update Edge (edge://settings/help), restart it, and reopen Audire.';
+  return 'For the most natural voices, like Ava, open Audire in Microsoft Edge.';
 }
 
 export default function VoiceSettings({ settings, update }) {
-  const [status, setStatus] = useState(statusFromGlobals);
+  const { voices, hasNatural, ready } = useDeviceVoices();
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
 
-  useEffect(() => {
-    const onProgress = (e) =>
-      setStatus((s) => ({ ...s, loading: true, ready: false, loaded: e.detail.loaded || 0, total: e.detail.total || 0 }));
-    const onReady = () => setStatus({ ready: true, loading: false, error: null, loaded: 0, total: 0 });
-    const onError = (e) => setStatus({ ready: false, loading: false, error: e.detail, loaded: 0, total: 0 });
-    window.addEventListener('audire-kokoro-progress', onProgress);
-    window.addEventListener('audire-kokoro-ready', onReady);
-    window.addEventListener('audire-kokoro-error', onError);
-    return () => {
-      window.removeEventListener('audire-kokoro-progress', onProgress);
-      window.removeEventListener('audire-kokoro-ready', onReady);
-      window.removeEventListener('audire-kokoro-error', onError);
-      ttsManager.stop();
-    };
-  }, []);
+  useEffect(() => () => ttsManager.stop(), []);
 
   useEffect(() => {
     ttsManager.applySettings(settings);
   }, [settings]);
+
+  const selected = resolveWebSpeechVoice(voices, settings.webSpeechVoice);
 
   const preview = async () => {
     if (previewing) { ttsManager.stop(); setPreviewing(false); return; }
@@ -55,65 +44,64 @@ export default function VoiceSettings({ settings, update }) {
     }
   };
 
-  const badge = () => {
-    if (status.error) return <span className="voice-engine-badge voice-engine-badge--off">Failed to load</span>;
-    if (status.loading) {
-      const pct = status.total > 0 ? Math.round((status.loaded / status.total) * 100) : null;
-      return (
-        <span className="voice-engine-badge voice-engine-badge--loading">
-          Downloading{pct !== null ? ` ${pct}%` : '…'}
-        </span>
-      );
-    }
-    if (status.ready) return <span className="voice-engine-badge voice-engine-badge--ok">Ready</span>;
-    return <span className="voice-engine-badge voice-engine-badge--loading">Loading…</span>;
-  };
+  if (!isWebSpeechSupported()) {
+    return (
+      <div className="dashboard-settings-card voice-settings">
+        <h3>Voice</h3>
+        <p className="voice-engine-error">This browser cannot read aloud. Try Microsoft Edge, Chrome or Safari.</p>
+      </div>
+    );
+  }
+
+  const english = voices.filter((v) => v.lang?.startsWith('en'));
+  const other = voices.filter((v) => !v.lang?.startsWith('en'));
 
   return (
     <div className="dashboard-settings-card voice-settings">
       <h3>Voice</h3>
       <p className="dashboard-settings-hint">
-        Kokoro runs entirely in your browser — no server needed, works offline.
-        The model downloads once (~82 MB) and is then cached on your device.
+        Audire reads with the voices built into your device and browser, showing only the natural-sounding ones.
       </p>
 
       <div className="voice-engine">
         <div className="voice-engine-header">
           <div className="voice-engine-title">
-            <strong>Kokoro neural voice</strong>
+            <strong>{selected ? voiceDisplayName(selected) : 'Device voice'}</strong>
           </div>
-          {badge()}
+          {ready && (
+            <span className={`voice-engine-badge voice-engine-badge--${hasNatural ? 'ok' : 'off'}`}>
+              {hasNatural ? 'Natural' : 'Standard only'}
+            </span>
+          )}
         </div>
 
-        {status.loading && (
-          <div className="kokoro-progress">
-            <div
-              className={status.total > 0 ? 'kokoro-progress-bar' : 'kokoro-progress-bar kokoro-progress-bar--indeterminate'}
-              style={status.total > 0 ? { width: `${Math.round((status.loaded / status.total) * 100)}%` } : undefined}
-            />
-          </div>
-        )}
-
-        <p className="dashboard-settings-hint">
-          A natural neural voice that runs directly in your browser. Works offline once downloaded.
-        </p>
+        {ready && !hasNatural && <p className="dashboard-settings-hint">{naturalVoiceHint()}</p>}
 
         <div className="voice-engine-controls">
           <select
             aria-label="Voice"
-            value={settings.kokoroVoice || KOKORO_DEFAULT_VOICE}
-            onChange={(e) => update('kokoroVoice', e.target.value)}
+            value={selected?.voiceURI || ''}
+            onChange={(e) => update('webSpeechVoice', e.target.value)}
             className="dashboard-settings-select"
+            disabled={!voices.length}
           >
-            {KOKORO_VOICES.map((v) => (
-              <option key={v.id} value={v.id}>{v.name} ({v.grade})</option>
-            ))}
+            {!voices.length && <option value="">Loading voices…</option>}
+            {english.length > 0 && (
+              <optgroup label="English">
+                {english.map((v) => <option key={v.voiceURI} value={v.voiceURI}>{voiceDisplayName(v)}</option>)}
+              </optgroup>
+            )}
+            {other.length > 0 && (
+              <optgroup label="Other languages">
+                {other.map((v) => <option key={v.voiceURI} value={v.voiceURI}>{voiceDisplayName(v)}</option>)}
+              </optgroup>
+            )}
           </select>
           <button
             type="button"
             className="dashboard-settings-preview-btn"
             onClick={preview}
-            disabled={!status.ready}
+            disabled={!voices.length}
             aria-label={previewing ? 'Stop preview' : 'Preview voice'}
           >
             {previewing ? <Square size={14} /> : <Play size={14} />}

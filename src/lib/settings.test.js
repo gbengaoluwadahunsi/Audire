@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getSettings } from './settings';
-import { KOKORO_DEFAULT_VOICE } from './kokoroVoices';
 
 const store = new Map();
 globalThis.localStorage = {
@@ -13,33 +12,31 @@ const saveRaw = (obj) => store.set('audire-settings', JSON.stringify(obj));
 beforeEach(() => store.clear());
 
 describe('getSettings', () => {
-  it('defaults to Kokoro voice af_heart', () => {
-    expect(getSettings().kokoroVoice).toBe(KOKORO_DEFAULT_VOICE);
+  it('defaults to letting the app pick the best device voice', () => {
+    expect(getSettings().webSpeechVoice).toBe('');
   });
 
-  it('drops legacy engine/voice keys from older versions', () => {
+  it('drops keys from the removed Edge and Kokoro voices', () => {
     saveRaw({
       edgeTtsVoice: 'en-US-AvaMultilingualNeural',
       engineOrder: ['edge-tts', 'web-speech'],
-      webSpeechVoice: 'Google US English',
       ttsEngine: 'edge-tts',
+      kokoroVoice: 'af_heart',
       kokoroAutoDownload: true,
     });
     const s = getSettings();
-    expect(s.edgeTtsVoice).toBeUndefined();
-    expect(s.engineOrder).toBeUndefined();
-    expect(s.webSpeechVoice).toBeUndefined();
-    expect(s.ttsEngine).toBeUndefined();
-    expect(s.kokoroAutoDownload).toBeUndefined();
+    for (const key of ['edgeTtsVoice', 'engineOrder', 'ttsEngine', 'kokoroVoice', 'kokoroAutoDownload']) {
+      expect(s[key]).toBeUndefined();
+    }
   });
 
-  it('preserves saved kokoroVoice', () => {
-    saveRaw({ kokoroVoice: 'am_echo' });
-    expect(getSettings().kokoroVoice).toBe('am_echo');
+  it('keeps the chosen device voice', () => {
+    saveRaw({ webSpeechVoice: 'Microsoft Ava Online (Natural) - English (United States)' });
+    expect(getSettings().webSpeechVoice).toBe('Microsoft Ava Online (Natural) - English (United States)');
   });
 
   it('falls back to defaults when storage holds junk', () => {
     store.set('audire-settings', '{not json');
-    expect(getSettings().kokoroVoice).toBe(KOKORO_DEFAULT_VOICE);
+    expect(getSettings().webSpeechVoice).toBe('');
   });
 });

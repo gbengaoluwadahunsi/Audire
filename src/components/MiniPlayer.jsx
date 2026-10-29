@@ -1,15 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap, Settings as SettingsIcon, Moon, Mic } from 'lucide-react';
 import { usePlayback } from '../context/PlaybackContext';
-import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE } from '../lib/kokoroVoices';
-
+import { useDeviceVoices, voiceDisplayName } from '../lib/voices/useDeviceVoices';
+import { resolveWebSpeechVoice } from '../lib/voices/webSpeechEngine';
 
 export default function MiniPlayer({ onOpenBook }) {
   const {
     currentBook, isPlaying, progress, volume, speed, voice, sleepTimer,
     pause, stop, setVolume, setSpeed, setVoice, startSleepTimer, onNext, onPrev
   } = usePlayback();
-  
+  const { voices } = useDeviceVoices();
+  const selectedVoice = resolveWebSpeechVoice(voices, voice)?.voiceURI || '';
+
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
   const [sleepTimeStr, setSleepTimeStr] = useState('');
@@ -181,11 +183,11 @@ export default function MiniPlayer({ onOpenBook }) {
                 <Mic size={14} /> Voice
               </div>
               <select
-                value={voice || KOKORO_DEFAULT_VOICE}
+                value={selectedVoice}
                 onChange={(e) => setVoice(e.target.value)}
                 style={{ width: '100%', padding: '6px', borderRadius: '4px', background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
               >
-                {KOKORO_VOICES.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                {voices.map((v) => <option key={v.voiceURI} value={v.voiceURI}>{voiceDisplayName(v)}</option>)}
               </select>
             </div>
 

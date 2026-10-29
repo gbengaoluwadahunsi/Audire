@@ -1,4 +1,4 @@
-const CACHE = 'audire-v12';
+const CACHE = 'audire-v13'; // activating also deletes the old Kokoro model caches
 
 const PRECACHE = [
   '/',
@@ -30,17 +30,13 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin || e.request.method !== 'GET') return;
 
-  // Never cache: Vite dev URLs, node_modules, WASM, ONNX model files, API calls.
-  // Exception: our own hashed ONNX runtime, which the on-device voice needs offline.
-  const isOnnxRuntime = url.pathname.startsWith('/assets/ort-wasm');
+  // Never cache: Vite dev URLs, node_modules, WASM, API calls.
   const skip = url.pathname.startsWith('/node_modules/') ||
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/@vite/') ||
     url.pathname.startsWith('/@react-refresh') ||
     url.pathname.startsWith('/src/') ||
-    (url.pathname.endsWith('.wasm') && !isOnnxRuntime) ||
-    url.pathname.endsWith('.onnx') ||
-    url.pathname.includes('/onnx-community/') ||
+    url.pathname.endsWith('.wasm') ||
     url.pathname.includes('pdf.worker');
   if (skip) return;
 

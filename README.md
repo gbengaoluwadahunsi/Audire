@@ -8,8 +8,7 @@
 
 ## Highlights
 
-- **Podcast-quality TTS** — Read any book aloud with natural neural voices. Gapless playback across pages.
-- **Two voice engines, never silent** — Online neural voices (Edge) first, then your device's built-in voices. If Edge stops responding, the same sentence carries on with the device voice. Order and voices are configurable in Settings.
+- **Natural read-aloud** — Reads any book with the natural voices built into your device and browser, with no server or account. Only natural-sounding voices are offered; Microsoft Edge's "Ava Online (Natural)" is picked by default when available.
 - **Word-by-word highlighting** — Optional: the sentence being read and each spoken word are highlighted in the page.
 - **Seamless page controls** — While TTS is active, `next/prev` jumps and continues reading from the newly selected page.
 - **EPUB & PDF** — Upload and read your library. EPUB is read natively and PDF is supported directly.
@@ -25,7 +24,7 @@
 |-------|-----------|
 | Frontend | React 19, Vite 7, CSS |
 | Backend | Node.js, Express, PostgreSQL ([Neon](https://neon.tech)) |
-| TTS | Edge TTS (online neural) → Web Speech API (built-in) |
+| TTS | Web Speech API (device and browser voices, natural ones preferred) |
 | EPUB→PDF | Calibre `ebook-convert` (optional fallback utility) |
 | OCR | Tesseract.js |
 | AI | Groq API |
@@ -132,8 +131,7 @@ Output goes to `dist/`. Deploy the frontend to Vercel, Netlify, or any static ho
 - Recommended default distribution model: open-source + self-hosting.
 - For multi-user or commercial deployment, add authentication, restrictive CORS, and rate limiting before launch.
 - `GROQ_API_KEY` is optional — without it, AI features are disabled but reading and TTS work fine.
-- If the Edge TTS backend is unavailable, reading continues with the device's built-in voices.
-- Edge TTS uses Microsoft's unofficial read-aloud service, which changes without notice. A daily GitHub Action (`.github/workflows/voice-check.yml`) checks it still works.
+- Voice quality depends on the device. The most natural voices come from Microsoft Edge (Online Natural voices), downloaded Enhanced/Premium voices on Apple devices, and Google's speech service on Android.
 
 ## Free Tier Note
 

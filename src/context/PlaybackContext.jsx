@@ -10,7 +10,7 @@ export function PlaybackProvider({ children }) {
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(1);
   const [speed, setSpeedState] = useState(getSettings().speed || 1.0);
-  const [voice, setVoiceState] = useState(getSettings().kokoroVoice || 'af_heart');
+  const [voice, setVoiceState] = useState(getSettings().webSpeechVoice || '');
   const [pitch, setPitchState] = useState(getSettings().pitch || 0);
   const [sleepTimer, setSleepTimer] = useState(null); // time in ms when to stop
 
@@ -29,9 +29,9 @@ export function PlaybackProvider({ children }) {
 
   const setVoice = useCallback((v) => {
     setVoiceState(v);
-    ttsManager.setKokoroVoice(v);
+    ttsManager.setVoice(v);
     const settings = getSettings();
-    saveSettings({ ...settings, kokoroVoice: v });
+    saveSettings({ ...settings, webSpeechVoice: v });
   }, []);
 
   const setPitch = useCallback((p) => {

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, BookmarkPlus, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Download, Check, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Pause, Bookmark, BookmarkPlus, List, X, Sparkles, Highlighter, Layers, Search, MoreVertical, Share2, FileText, Columns, Maximize2 } from 'lucide-react';
 import ePub from 'epubjs';
 import * as pdfjs from 'pdfjs-dist';
 import { ttsManager } from '../lib/ttsManager';
@@ -77,8 +77,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
   const [searching, setSearching] = useState(false);
   const [highlightColor, setHighlightColor] = useState('yellow');
   const [showAIPanel, setShowAIPanel] = useState(false);
-  const [offlineStatus, setOfflineStatus] = useState('idle'); // 'idle' | 'downloading' | 'done'
-  const [offlineProgress, setOfflineProgress] = useState(0);
   const [selectedText, setSelectedText] = useState('');
   const [selectionContext, setSelectionContext] = useState('');
   const [continuousMode, setContinuousMode] = useState(true);
@@ -217,16 +215,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
     ttsManager.onWordBoundary = (_chunkIndex, word) => applyTtsWordHighlight(word.text);
     return () => { ttsManager.onWordBoundary = null; };
   }, []);
-
-  useEffect(() => {
-    const onStatus = (e) => {
-      if (e.detail?.notice === 'loading') {
-        addToast?.('Downloading the voice (about 82 MB, first time only). Reading starts when it is ready.', 'info');
-      }
-    };
-    window.addEventListener('audire-tts-status', onStatus);
-    return () => window.removeEventListener('audire-tts-status', onStatus);
-  }, [addToast]);
 
   // Clear any karaoke highlight once playback stops.
   useEffect(() => {
@@ -995,7 +983,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         // and say so instead.
         if (ttsManager._abortedOnFailure) {
           console.warn('Reader: TTS aborted mid-page, not advancing');
-          addToast?.('Reading stopped: none of your voices could be reached. Check your connection and press play to continue, or pick another voice in Settings.', 'error');
+          addToast?.('Reading stopped: the voice stopped responding. Press play to continue, or pick another voice in Settings.', 'error');
           break;
         }
 
@@ -1250,45 +1238,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
       }
     } catch {
       /* highlighting is best-effort; never break playback */
-    }
-  };
-
-  const handleDownloadOffline = async () => {
-    if (offlineStatus === 'downloading') return;
-    setOfflineStatus('downloading');
-    setOfflineProgress(0);
-    try {
-      let rawText = '';
-      if (bookData.format === 'pdf' && pdfRef.current && totalPages > 0) {
-        const from = Math.min(totalPages, (currentPage || 1) + pdfPageOffset);
-        const to = Math.min(totalPages, from + 24); // ~25 pages ≈ a chapter
-        rawText = await extractTextFromPdfDocRange(pdfRef.current, from, to);
-      } else if (bookData.format === 'epub') {
-        const loc = renditionRef.current?.currentLocation?.();
-        const href = loc?.start?.href;
-        if (href && bookRef.current) {
-          rawText = await extractTextFromSection(bookRef.current, href);
-        }
-      }
-
-      const chunks = splitIntoSentenceChunks(sanitizeTextForTTS(rawText || ''));
-      if (!chunks.length) {
-        addToast?.('Nothing to download here yet — try once the page has loaded.', 'info');
-        setOfflineStatus('idle');
-        return;
-      }
-
-      ttsManager.applySettings(getSettings());
-      const ok = await ttsManager.downloadChunks(chunks, (done, total) => {
-        setOfflineProgress(total ? Math.round((done / total) * 100) : 0);
-      });
-      setOfflineStatus('done');
-      addToast?.(`Saved ${ok} segment${ok === 1 ? '' : 's'} for offline listening`, 'success');
-      setTimeout(() => setOfflineStatus('idle'), 4000);
-    } catch (err) {
-      console.error('Offline download failed:', err);
-      addToast?.('Could not download for offline use', 'error');
-      setOfflineStatus('idle');
     }
   };
 
@@ -1582,20 +1531,6 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
             title="Search in book"
           >
             <Search size={18} />
-          </button>
-          <button
-            className={`control-btn ${offlineStatus !== 'idle' ? 'active' : ''}`}
-            onClick={handleDownloadOffline}
-            disabled={offlineStatus === 'downloading'}
-            title="Download this section for offline listening"
-          >
-            {offlineStatus === 'downloading' ? (
-              <span className="offline-progress-label">{offlineProgress}%</span>
-            ) : offlineStatus === 'done' ? (
-              <Check size={18} />
-            ) : (
-              <Download size={18} />
-            )}
           </button>
           <button
             className={`control-btn ${showToc ? 'active' : ''}`}

@@ -1,9 +1,7 @@
-import { KOKORO_DEFAULT_VOICE } from './kokoroVoices';
-
 const STORAGE_KEY = 'audire-settings';
 
 const DEFAULTS = {
-  kokoroVoice: KOKORO_DEFAULT_VOICE,
+  webSpeechVoice: '', // voiceURI; empty = the best natural voice on this device
   speed: 1.0,
   fontSize: 15,
   fontFamily: 'System',
@@ -29,8 +27,8 @@ export function getSettings() {
     delete merged.ttsVoice;
     delete merged.voice;
     delete merged.edgeTtsVoice;
-    delete merged.webSpeechVoice;
     delete merged.engineOrder;
+    delete merged.kokoroVoice;
     delete merged.kokoroAutoDownload;
     return merged;
   } catch {
@@ -53,12 +51,16 @@ export function getPdfOffset(bookId) {
   try {
     const stored = localStorage.getItem(`${PDF_OFFSET_KEY}-${bookId}`);
     if (stored) return Math.max(0, parseInt(stored, 10) || 0);
-  } catch {}
+  } catch {
+    // Ignore missing/inaccessible local storage.
+  }
   return 0;
 }
 
 export function setPdfOffset(bookId, offset) {
   try {
     localStorage.setItem(`${PDF_OFFSET_KEY}-${bookId}`, String(Math.max(0, offset)));
-  } catch {}
+  } catch {
+    // Ignore storage write failures (private mode/quota/etc.).
+  }
 }
