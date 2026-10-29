@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap, Settings as SettingsIcon, Moon, Mic, Music } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, X, Zap, Settings as SettingsIcon, Moon, Mic } from 'lucide-react';
 import { usePlayback } from '../context/PlaybackContext';
-import { EDGE_TTS_VOICES } from '../lib/edgeTtsVoices';
+import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE } from '../lib/kokoroVoices';
 
 
 export default function MiniPlayer({ onOpenBook }) {
-  const { 
-    currentBook, isPlaying, progress, volume, speed, voice, pitch, sleepTimer, 
-    pause, stop, setVolume, setSpeed, setVoice, setPitch, startSleepTimer, onNext, onPrev 
+  const {
+    currentBook, isPlaying, progress, volume, speed, voice, sleepTimer,
+    pause, stop, setVolume, setSpeed, setVoice, startSleepTimer, onNext, onPrev
   } = usePlayback();
   
   const [showSettings, setShowSettings] = useState(false);
@@ -178,30 +178,15 @@ export default function MiniPlayer({ onOpenBook }) {
           }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                <Mic size={14} /> Online voice
+                <Mic size={14} /> Voice
               </div>
-              <select 
-                value={voice} 
+              <select
+                value={voice || KOKORO_DEFAULT_VOICE}
                 onChange={(e) => setVoice(e.target.value)}
                 style={{ width: '100%', padding: '6px', borderRadius: '4px', background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
               >
-                {EDGE_TTS_VOICES.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                {KOKORO_VOICES.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
-            </div>
-
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                <Music size={14} /> Pitch ({pitch > 0 ? '+' : ''}{pitch}Hz, not used by on-device voices)
-              </div>
-              <input
-                type="range"
-                min="-50"
-                max="50"
-                step="5"
-                value={pitch ?? 0}
-                onChange={(e) => setPitch(parseInt(e.target.value))}
-                style={{ width: '100%' }}
-              />
             </div>
 
             <div>

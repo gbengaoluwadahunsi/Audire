@@ -5340,6 +5340,21 @@
 }
 .voice-engine-badge--ok { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
 .voice-engine-badge--off { background: var(--surface-hover); color: var(--text-tertiary); }
+.voice-engine-badge--loading { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
+
+.kokoro-progress {
+  height: 4px;
+  background: var(--surface-hover);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.kokoro-progress-bar {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
 .voice-engine-order {
   display: flex;
   gap: 4px;

@@ -1,4 +1,4 @@
-const CACHE = 'audire-v11'; // bumping this also frees the old Kokoro voice model caches
+const CACHE = 'audire-v12';
 
 const PRECACHE = [
   '/',

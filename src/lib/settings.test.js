@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getSettings } from './settings';
-import { DEFAULT_ENGINE_ORDER, normalizeEngineOrder } from './voices/engines';
+import { KOKORO_DEFAULT_VOICE } from './kokoroVoices';
 
 const store = new Map();
 globalThis.localStorage = {
@@ -13,35 +13,33 @@ const saveRaw = (obj) => store.set('audire-settings', JSON.stringify(obj));
 beforeEach(() => store.clear());
 
 describe('getSettings', () => {
-  it('defaults to Edge → device voices', () => {
-    expect(getSettings().engineOrder).toEqual(['edge-tts', 'web-speech']);
+  it('defaults to Kokoro voice af_heart', () => {
+    expect(getSettings().kokoroVoice).toBe(KOKORO_DEFAULT_VOICE);
   });
 
-  it('keeps the voice chosen in the mini player (old `voice` key)', () => {
-    saveRaw({ voice: 'en-GB-SoniaNeural', edgeTtsVoice: 'en-US-AvaMultilingualNeural' });
+  it('drops legacy engine/voice keys from older versions', () => {
+    saveRaw({
+      edgeTtsVoice: 'en-US-AvaMultilingualNeural',
+      engineOrder: ['edge-tts', 'web-speech'],
+      webSpeechVoice: 'Google US English',
+      ttsEngine: 'edge-tts',
+      kokoroAutoDownload: true,
+    });
     const s = getSettings();
-    expect(s.edgeTtsVoice).toBe('en-GB-SoniaNeural');
-    expect(s.voice).toBeUndefined();
-  });
-
-  it('drops the removed Kokoro engine and its settings', () => {
-    saveRaw({ ttsEngine: 'kokoro', engineOrder: ['kokoro', 'web-speech', 'edge-tts'], kokoroVoice: 'bf_emma', kokoroAutoDownload: true });
-    const s = getSettings();
-    expect(s.engineOrder).toEqual(['web-speech', 'edge-tts']);
-    expect(s.kokoroVoice).toBeUndefined();
-    expect(s.kokoroAutoDownload).toBeUndefined();
+    expect(s.edgeTtsVoice).toBeUndefined();
+    expect(s.engineOrder).toBeUndefined();
+    expect(s.webSpeechVoice).toBeUndefined();
     expect(s.ttsEngine).toBeUndefined();
+    expect(s.kokoroAutoDownload).toBeUndefined();
+  });
+
+  it('preserves saved kokoroVoice', () => {
+    saveRaw({ kokoroVoice: 'am_echo' });
+    expect(getSettings().kokoroVoice).toBe('am_echo');
   });
 
   it('falls back to defaults when storage holds junk', () => {
     store.set('audire-settings', '{not json');
-    expect(getSettings().engineOrder).toEqual(DEFAULT_ENGINE_ORDER);
-  });
-});
-
-describe('normalizeEngineOrder', () => {
-  it('drops unknown and duplicate engines and adds missing ones', () => {
-    expect(normalizeEngineOrder(['web-speech', 'nope', 'web-speech'])).toEqual(['web-speech', 'edge-tts']);
-    expect(normalizeEngineOrder(undefined)).toEqual(DEFAULT_ENGINE_ORDER);
+    expect(getSettings().kokoroVoice).toBe(KOKORO_DEFAULT_VOICE);
   });
 });

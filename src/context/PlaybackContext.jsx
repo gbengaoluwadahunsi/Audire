@@ -10,7 +10,7 @@ export function PlaybackProvider({ children }) {
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(1);
   const [speed, setSpeedState] = useState(getSettings().speed || 1.0);
-  const [voice, setVoiceState] = useState(getSettings().edgeTtsVoice || 'en-US-AvaMultilingualNeural');
+  const [voice, setVoiceState] = useState(getSettings().kokoroVoice || 'af_heart');
   const [pitch, setPitchState] = useState(getSettings().pitch || 0);
   const [sleepTimer, setSleepTimer] = useState(null); // time in ms when to stop
 
@@ -29,10 +29,9 @@ export function PlaybackProvider({ children }) {
 
   const setVoice = useCallback((v) => {
     setVoiceState(v);
-    ttsManager.setEdgeTtsVoice(v);
+    ttsManager.setKokoroVoice(v);
     const settings = getSettings();
-    // Same key the Reader and Settings read, so the choice sticks across books.
-    saveSettings({ ...settings, edgeTtsVoice: v });
+    saveSettings({ ...settings, kokoroVoice: v });
   }, []);
 
   const setPitch = useCallback((p) => {

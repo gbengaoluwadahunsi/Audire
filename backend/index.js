@@ -5,7 +5,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import booksRouter from './routes/books.js';
 import aiRouter from './routes/ai.js';
-import ttsRouter from './routes/tts.js';
 import librarySyncRouter from './routes/librarySync.js';
 import statsRouter from './routes/stats.js';
 import importRouter from './routes/import.js';
@@ -26,7 +25,6 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/books', booksRouter);
 app.use('/api/library-sync', librarySyncRouter);
 app.use('/api/ai', aiRouter);
-app.use('/api/tts', ttsRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/import', importRouter);
 
