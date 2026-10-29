@@ -85,11 +85,11 @@ export default function VoiceSettings({ settings, update }) {
           {badge()}
         </div>
 
-        {status.loading && status.total > 0 && (
+        {status.loading && (
           <div className="kokoro-progress">
             <div
-              className="kokoro-progress-bar"
-              style={{ width: `${Math.round((status.loaded / status.total) * 100)}%` }}
+              className={status.total > 0 ? 'kokoro-progress-bar' : 'kokoro-progress-bar kokoro-progress-bar--indeterminate'}
+              style={status.total > 0 ? { width: `${Math.round((status.loaded / status.total) * 100)}%` } : undefined}
             />
           </div>
         )}
