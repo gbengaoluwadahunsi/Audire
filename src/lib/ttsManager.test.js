@@ -83,6 +83,31 @@ describe('TTSManager', () => {
     expect(manager._abortedOnFailure).toBe(false);
   });
 
+  it('starting another book stops a paused book for good', async () => {
+    const manager = new TTSManager();
+    const B = ['Book B one.', 'Book B two.'];
+    const A = ['Book A one.', 'Book A two.'];
+    speakImpl = (text) => {
+      if (text !== B[0]) return 'ended';
+      setTimeout(() => manager.pause(), 5);
+      return new Promise((resolve) => { cancelPending = resolve; });
+    };
+
+    manager.startSession('B');
+    const bDone = manager.speakContinuous(B, () => {}, 'B');
+    await new Promise((r) => setTimeout(r, 30)); // B is now paused mid-sentence
+
+    // What the Reader does when play is pressed on book A.
+    manager.stop();
+    manager.startSession('A');
+    await new Promise((r) => setTimeout(r, 150)); // the Reader extracting book A's page text
+    await manager.speakContinuous(A, () => {}, 'A');
+    await bDone;
+
+    expect(spoken.map((s) => s.text)).toEqual([B[0], ...A]);
+    expect(manager.currentSessionId).toBe('A');
+  });
+
   it('retries a sentence that errors once, then carries on', async () => {
     let failed = false;
     speakImpl = (text) => {

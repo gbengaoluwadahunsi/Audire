@@ -730,7 +730,7 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
     const sessionId = Date.now();
     playbackSessionRef.current = sessionId;
 
-    ttsManager.startSession();
+    ttsManager.startSession(sessionId);
     ttsManager._stopped = false;
 
     console.log('Reader: Starting fresh TTS session', sessionId);
@@ -970,7 +970,9 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
         }
 
         // Check if session changed or stopped while reading
-        const sessionChanged = sessionId !== playbackSessionRef.current;
+        // Also changed when another open book took over the voice.
+        const sessionChanged =
+          sessionId !== playbackSessionRef.current || ttsManager.currentSessionId !== sessionId;
         const stopped = ttsManager._stopped;
         const paused = ttsManager.isPaused;
         if (sessionChanged || !continuousModeRef.current || stopped || paused) {
@@ -1030,7 +1032,12 @@ function Reader({ bookData, onBack, onSplitScreen, inSplitView, onProgressUpdate
     } finally {
       ttsStartingRef.current = false;
       setIsTTSLoading(false); // always clear spinner, even if session changed
-      if (sessionId === playbackSessionRef.current && currentBook?.id === bookData.id) {
+      // Skip when another open book now owns the voice, or this would stop its reading.
+      if (
+        sessionId === playbackSessionRef.current &&
+        currentBook?.id === bookData.id &&
+        ttsManager.currentSessionId === sessionId
+      ) {
         setIsTTSLoading(false);
         // Only reset global UI states if we truly finished the whole book or errored out
         if (!ttsManager.isPaused) {

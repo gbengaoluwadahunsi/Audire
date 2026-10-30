@@ -175,9 +175,11 @@ export class TTSManager {
     if (!clean) return;
     if (!isWebSpeechSupported()) throw new Error('This browser cannot read aloud.');
     await this._ensureVoices();
+    const sessionId = Symbol('preview');
+    this.currentSessionId = sessionId;
     this._sessionActive = true;
     try {
-      const ok = await this._speakChunk(clean, 0, undefined);
+      const ok = await this._speakChunk(clean, 0, sessionId);
       if (!ok && !this._stopped) throw new Error('This voice could not speak. Try another one.');
     } finally {
       this._sessionActive = false;
@@ -223,7 +225,9 @@ export class TTSManager {
     }
   }
 
-  startSession() {
+  /** Claim the voice for a new session; any earlier session stops at its next check. */
+  startSession(sessionId) {
+    if (sessionId) this.currentSessionId = sessionId;
     this._stopped = false;
     this.isPaused = false;
     this._abortedOnFailure = false;
@@ -231,6 +235,9 @@ export class TTSManager {
 
   stop() {
     this._stopped = true;
+    // Ends the session for good. `_stopped` alone is not enough: a new session clears it
+    // straight away, which used to wake a paused session in another open book.
+    this.currentSessionId = null;
     this.isPaused = false;
     if (this._speaking || isWebSpeechSpeaking()) cancelWebSpeech();
     this._speaking = false;
